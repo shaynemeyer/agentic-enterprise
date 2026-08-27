@@ -1,0 +1,20 @@
+services:
+  agent-api:
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: runtime
+    container_name: langgraph_enterprise_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app:z
+      - /app/.venv # an anonymous volume to preserve the container's own venv underneath the mount
+    userns_mode: "keep-id:uid=1001,gid=1001"
+    environment:
+      - ENV=development
+      - LOG_LEVEL=debug
+      - WATCHFILES_FORCE_POLLING=true
+    command:
+      ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    restart: unless-stopped
