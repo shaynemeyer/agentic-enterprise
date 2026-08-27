@@ -406,7 +406,7 @@ if __name__ == "__main__":
 | `LLM_MODEL`    | `mistral-nemo:12b`                         | `mistralai/Mistral-Nemo-Instruct-2407` |
 | `LLM_BASE_URL` | `http://host.containers.internal:11434/v1` | `http://vllm:8000/v1`                  |
 | Runs where     | Native on macOS (Metal)                    | Containerized, GPU passthrough via CDI |
-| Compose file   | `podman-compose.mac.yml`                   | `podman-compose.prod.yml`              |
+| Compose file   | `compose.mac.yaml`                         | `compose.prod.yaml`                    |
 
 Application code — LangGraph nodes, prompts, tool bindings — stays identical across both. Only `.env` and the compose override change.
 
@@ -443,44 +443,44 @@ This is the step people usually skip and then get bitten by. The Mac-native Olla
 podman-compose -f compose.yaml -f compose.mac.yaml up -d
 ```
 
-```bash
-podman exec -it <fastapi_container_name> \
- curl http://host.containers.internal:11434/v1/chat/completions \
- -H "Content-Type: application/json" \
- -d '{"model": "mistral-nemo:12b", "messages": [{"role": "user", "content": "Confirm System Integrity."}]}'
-```
-
-from the terminal use `localhost`
-
-```bash
-podman exec -it <fastapi_container_name> \
- curl http://localhost:11434/v1/chat/completions \
- -H "Content-Type: application/json" \
- -d '{"model": "mistral-nemo:12b", "messages": [{"role": "user", "content": "Confirm System Integrity."}]}'
-```
-
-Get your actual container name/id first if you don't have it handy:
+Get the running container's name (it's `langgraph_enterprise_api`, per `container_name` in `compose.yaml`, but confirm if unsure):
 
 ```bash
 podman ps
 ```
 
-If that fails (Connection refused or could not resolve host):
-
-Confirm `host.containers.internal` resolves in your Podman version — check with podman machine ssh -- cat /etc/hosts or just try `podman exec -it <container> ping host.containers.internal`.
-If it doesn't resolve, bind Ollama more broadly and use the VM's gateway IP instead, as noted in the Ollama reference doc:
-
 ```bash
-OLLAMA_HOST=0.0.0.0:11434 ollama serve
+podman exec -it langgraph_enterprise_api \
+ curl http://host.containers.internal:11434/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -d '{"model": "mistral-nemo:12b", "messages": [{"role": "user", "content": "Confirm System Integrity."}]}'
 ```
 
-then from inside the VM: `podman machine ssh -- ip route | grep default` to get the gateway IP to use in place of `host.containers.internal`.
+Note: `host.containers.internal` only resolves *inside* a container — running the same curl from your Mac's own terminal (outside any container) needs `localhost` instead, as in step 2 above.
+
+If the in-container curl fails (`Connection refused` or `could not resolve host`):
+
+1. Confirm `host.containers.internal` resolves in your Podman version:
+
+   ```bash
+   podman exec -it langgraph_enterprise_api ping host.containers.internal
+   ```
+
+2. If it doesn't resolve, bind Ollama more broadly and use the Podman VM's gateway IP instead:
+
+   ```bash
+   OLLAMA_HOST=0.0.0.0:11434 ollama serve
+   ```
+
+   Then find the gateway IP from inside the VM and use it in place of `host.containers.internal`:
+
+   ```bash
+   podman machine ssh -- ip route | grep default
+   ```
 
 ### 4. Once both pass, run the actual app-level check
 
-If get_sovereign_llm() in llm.py is pointed at the right base URL for your environment, you can just exercise the app itself rather than raw curl — e.g. hit whatever endpoint in your FastAPI app calls the LLM, and confirm the response comes back with real content and no connection errors in the logs.
-
-Want me to also walk through wiring up and running check_llm_parity.py against just the Ollama side for now (since the vLLM/cluster side presumably isn't up yet), so you have a working baseline before the cluster deploy happens?
+If `get_sovereign_llm()` in `llm.py` is pointed at the right base URL for your environment, you can just exercise the app itself rather than raw curl — e.g. hit whatever endpoint in your FastAPI app calls the LLM, and confirm the response comes back with real content and no connection errors in the logs.
 
 ```bash
 podman exec -it langgraph_enterprise_api python3 -c "
