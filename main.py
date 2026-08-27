@@ -1,35 +1,29 @@
-import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 
-from app.api.v1 import health
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
-logger = logging.getLogger("enterprise_agent")
+from schemas import AgentRequest, AgentResponse
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: LangGraph agents, vector DB clients, HTTP pools
-    logger.info("Initializing Sovereign Agentic Core...")
-    yield
-    # Shutdown: close connections, flush telemetry
-    logger.info("Shutting down Sovereign Agentic Core...")
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    # Startup
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        app.state.http = client
+        yield
+    # Shutdown happens on exit from the async with
 
 
-app = FastAPI(
-    title="Sovereign Enterprise Agent API",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-
-app.include_router(health.router)
+app = FastAPI(title="Sovereign Agentic API", lifespan=lifespan)
 
 
-@app.get("/")
-async def root():
-    return {"status": "Active", "message": "Sovereign Agent Node Online"}
+@app.post("/v1/agent/invoke", response_model=AgentResponse)
+async def invoke_agent(payload: AgentRequest) -> AgentResponse:
+    # Simulated agent logic
+    return AgentResponse(
+        request_id=payload.request_id,
+        status="processing",
+        output=f"Agent '{payload.agent_id}' has received the task: {payload.task_description}",
+    )
