@@ -9,7 +9,6 @@ services:
       - "8000:8000"
     volumes:
       - .:/app:z
-      - /app/.venv # an anonymous volume to preserve the container's own venv underneath the mount
     userns_mode: "keep-id:uid=1001,gid=1001"
     environment:
       - ENV=development
