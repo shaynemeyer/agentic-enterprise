@@ -1,5 +1,5 @@
-import logging
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 
