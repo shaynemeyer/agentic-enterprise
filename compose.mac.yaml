@@ -1,0 +1,9 @@
+services:
+  agent-api:
+    env_file: .env.mac
+    environment:
+      - ENV=development
+      - LOG_LEVEL=debug
+      - WATCHFILES_FORCE_POLLING=true
+    command:
+      ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

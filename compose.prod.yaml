@@ -1,0 +1,17 @@
+services:
+  agent-api:
+    env_file: .env.production
+    environment:
+      - ENV=production
+      - LOG_LEVEL=info
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      - vllm
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    command: --model /models/mistral-nemo-12b-instruct --served-model-name mistralai/Mistral-Nemo-Instruct-2407 --tensor-parallel-size 1
+    volumes:
+      - ./models:/models
+    devices:
+      - nvidia.com/gpu=all
