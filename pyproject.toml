@@ -1,0 +1,14 @@
+[project]
+name = "enterprise-agentic-workflow"
+version = "0.1.0"
+description = "Sovereign Multi-Agent System"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0", 
+  "langgraph>=0.2.0", 
+  "pydantic-settings>=2.4.0",
+]
+
+[tool.uv]
+managed = true
