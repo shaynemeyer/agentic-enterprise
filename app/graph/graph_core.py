@@ -22,26 +22,26 @@ def call_model(state: AgentState) -> dict:
     response = llm.invoke(prompt)
 
     return {
-        "messages": state["messages"] + [response.content],
+        "messages": state["messages"] + [response],
         "status": "completed",
     }
 
 
 # 1. Initialize the Graph with our State schema
-workflow = StateGraph(AgentState)
+graph_builder = StateGraph(AgentState)
 
 
 # 2. Add our node to the graph
-workflow.add_node("agent", call_model)
+graph_builder.add_node("agent", call_model)
 
 
 # 3. Define the flow: Start -> Agent -> End
-workflow.add_edge(START, "agent")
-workflow.add_edge("agent", END)
+graph_builder.add_edge(START, "agent")
+graph_builder.add_edge("agent", END)
 
 
-# 4. Compile the graph into an executable 'app'
-app = workflow.compile()
+# 4. Compile the graph into an executable workflow
+workflow = graph_builder.compile()
 
 if __name__ == "__main__":
     initial_input = {
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         "status": "starting",
     }
 
-    final_state = app.invoke(initial_input)
+    final_state = workflow.invoke(initial_input)
 
     print("--- Final Agent State ---")
     print(f"Status: {final_state['status']}")

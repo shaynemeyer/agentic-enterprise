@@ -34,3 +34,16 @@ class AgentResponse(BaseModel):
     status: str = Field(..., examples=["completed"])
     output: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SmokeTestRequest(BaseModel):
+    test_id: str = Field(..., examples=["ST-2026-001"])
+    payload: str = Field(default="System Check: Respond with 'READY'")
+
+
+class SmokeTestResponse(BaseModel):
+    test_id: str
+    graph_state: str
+    llm_response: str
+    latency_ms: float
+    status: str = "PASS"
