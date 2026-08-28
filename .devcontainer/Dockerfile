@@ -1,5 +1,5 @@
 # Use the 2026-standard slim Python image
-FROM mcr.microsoft.com/devcontainers/python:3.12-bullseye
+FROM mcr.microsoft.com/devcontainers/python:3.13-bookworm
 
 # Set the environment variable for non-interactive installs
 ENV DEBIAN_FRONTEND=noninteractive
