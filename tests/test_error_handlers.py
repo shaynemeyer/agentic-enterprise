@@ -1,6 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.core.config import settings
 from app.core.exceptions import MaxRecursionError
 from app.main import app
 
@@ -26,12 +27,22 @@ async def test_agentic_exception_returns_error_schema():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not settings.demo_password, reason="no DEMO_PASSWORD in .env")
 async def test_validation_error_uses_error_schema():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tok = await client.post(
+            "/api/v1/token",
+            data={
+                "username": settings.demo_username,
+                "password": settings.demo_password,
+            },
+        )
         resp = await client.post(
-            "/api/v1/run", json={"agent_id": "x"}
-        )  # missing task_description
+            "/api/v1/run",
+            json={"agent_id": "x"},  # missing task_description
+            headers={"Authorization": f"Bearer {tok.json()['access_token']}"},
+        )
 
     assert resp.status_code == 422
     assert resp.json()["error_code"] == "VALIDATION_ERROR"

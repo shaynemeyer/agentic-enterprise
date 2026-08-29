@@ -12,5 +12,13 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 512
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5433/agent_db"
 
+    jwt_secret: str = "dev-only-change-me"  # override via JWT_SECRET in .env
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 30
+
+    # Demo login. Empty password (the default) means no users are seeded.
+    demo_username: str = "admin"
+    demo_password: str = ""
+
 
 settings = Settings()

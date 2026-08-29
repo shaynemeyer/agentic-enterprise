@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from langgraph.errors import GraphRecursionError
 
-from app.api.v1 import endpoints, health
+from app.api.v1 import auth, endpoints, health
 from app.core.context import (
     REQUEST_ID_HEADER,
     get_request_id,
@@ -103,6 +103,7 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 
 
 app.include_router(health.router)
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(endpoints.router, prefix="/api/v1")
 
 

@@ -14,6 +14,8 @@ from app.models import AgentExecution
 from app.schemas.agent_schema import AgentRequest, AgentResponse
 from app.schemas.stream import StreamEvent
 
+from app.api.v1.auth import CurrentUser, get_current_user
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -31,6 +33,7 @@ async def log_agent_activity(data: str):
 async def run_agent_stream(
     payload: AgentRequest,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ):
     request_id = get_request_id()
 
@@ -75,6 +78,7 @@ async def run_agent(
     payload: AgentRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
 ):
     execution = AgentExecution(
         request_id=payload.request_id,
