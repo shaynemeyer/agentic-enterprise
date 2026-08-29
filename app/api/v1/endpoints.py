@@ -4,12 +4,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette import EventSourceResponse
 
+from app.core.context import REQUEST_ID_HEADER, get_request_id
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.database import get_db
 from app.graph.engine import workflow
 from app.models import AgentExecution
 from app.schemas.agent_schema import AgentRequest, AgentResponse
+from app.schemas.stream import StreamEvent
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,49 @@ async def log_agent_activity(data: str):
 
     await asyncio.sleep(1)
     print(f"AUDIT LOG: {data}")
+
+
+@router.post("/run/stream")
+async def run_agent_stream(
+    payload: AgentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    request_id = get_request_id()
+
+    execution = AgentExecution(
+        request_id=payload.request_id,
+        agent_id=payload.agent_id,
+        status="running",
+    )
+    db.add(execution)
+
+    async def events():
+        initial_state = {"messages": [HumanMessage(payload.task_description)]}
+        try:
+            async for mode, chunk in workflow.astream(
+                initial_state, stream_mode=["updates", "custom"]
+            ):
+                if mode == "custom":
+                    ev = StreamEvent(phase="status", content=chunk["status"])
+                else:  # "updates": {node_name: delta}
+                    node = next(iter(chunk))
+                    ev = StreamEvent(phase="node", node=node, content="step complete")
+                yield {
+                    "event": "message",
+                    "id": request_id,
+                    "data": ev.model_dump_json(),
+                }
+
+            execution.status = "completed"
+            done = StreamEvent(phase="done", content="run finished")
+            yield {"event": "done", "id": request_id, "data": done.model_dump_json()}
+
+        except GraphRecursionError:
+            execution.status = "failed"
+            err = StreamEvent(phase="error", content="recursion limit exceeded")
+            yield {"event": "error", "id": request_id, "data": err.model_dump_json()}
+
+    return EventSourceResponse(events(), headers={REQUEST_ID_HEADER: request_id})
 
 
 @router.post("/run", response_model=AgentResponse)

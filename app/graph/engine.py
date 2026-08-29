@@ -2,6 +2,7 @@ import logging
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 from app.core.context import get_request_id
@@ -23,7 +24,13 @@ async def call_model(state: AgentState) -> dict:
     """Invoke the LLM on the conversation so far and append its reply to state."""
     logger = logging.getLogger("enterprise_agent.graph")
     logger.info("node=agent request_id=%s", get_request_id() or "-")
+
+    writer = get_stream_writer()
+    writer({"status": "invoking model"})
+
     response = await llm.ainvoke(state["messages"])
+
+    writer({"status": "model responded"})
 
     return {
         "messages": state["messages"] + [response],

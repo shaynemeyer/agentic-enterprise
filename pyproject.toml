@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "sqlalchemy[asyncio]>=2.0.52",
     "asyncpg>=0.31.0",
+    "sse-starlette>=3.4.8",
 ]
 
 [dependency-groups]
