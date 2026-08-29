@@ -25,6 +25,7 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 asyncio_mode = "strict"
 markers = [
     "integration: exercises real external services (e.g. the LLM backend), not just app code",
