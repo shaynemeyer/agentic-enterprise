@@ -9,16 +9,33 @@ from fastapi.responses import JSONResponse
 from langgraph.errors import GraphRecursionError
 
 from app.api.v1 import endpoints, health
+from app.core.context import (
+    REQUEST_ID_HEADER,
+    get_request_id,
+    new_request_id,
+    set_request_id,
+)
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.schemas.errors import ErrorResponse
 
 from .graph.engine import workflow
 from .schemas.agent_schema import SmokeTestRequest, SmokeTestResponse
 
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = get_request_id() or "-"
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+for handler in logging.getLogger().handlers:
+    handler.addFilter(RequestIdFilter())
+
 logger = logging.getLogger("enterprise_agent")
 
 SMOKE_TEST_TIMEOUT_S = 60
@@ -40,11 +57,26 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    incoming = request.headers.get(REQUEST_ID_HEADER)
+    request_id = incoming or new_request_id()
+    set_request_id(request_id)
+
+    response = await call_next(request)
+
+    response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
 @app.exception_handler(AgenticException)
 async def handle_agentic_exception(request: Request, exc: AgenticException):
     logger.warning("agentic failure: %s (%s)", exc.message, exc.error_code)
     body = ErrorResponse(
-        error_code=exc.error_code, message=exc.message, details=exc.details
+        error_code=exc.error_code,
+        message=exc.message,
+        details=exc.details,
+        trace_id=get_request_id() or None,
     )
     return JSONResponse(
         status_code=exc.status_code, content=body.model_dump(mode="json")
@@ -65,6 +97,7 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
         error_code="VALIDATION_ERROR",
         message="Request body failed validation.",
         details=exc.errors(),
+        trace_id=get_request_id() or None,
     )
     return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 

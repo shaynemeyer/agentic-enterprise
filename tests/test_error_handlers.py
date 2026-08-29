@@ -13,14 +13,15 @@ async def test_agentic_exception_returns_error_schema():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/_test_boom")
+        resp = await client.get("/_test_boom", headers={"X-Request-ID": "trace-13"})
 
     assert resp.status_code == 422
     body = resp.json()
     assert body["success"] is False
     assert body["error_code"] == "MAX_RECURSION_REACHED"
     assert body["details"] == {"max_steps": 25, "current_step": 26}
-    assert body["trace_id"] is None
+    assert body["trace_id"] == "trace-13"
+    assert resp.headers["X-Request-ID"] == "trace-13"
     assert "timestamp" in body
 
 

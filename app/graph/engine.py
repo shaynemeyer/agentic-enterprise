@@ -1,8 +1,10 @@
+import logging
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import END, START, StateGraph
 
+from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
 
 
@@ -19,6 +21,8 @@ llm = get_sovereign_llm()
 
 async def call_model(state: AgentState) -> dict:
     """Invoke the LLM on the conversation so far and append its reply to state."""
+    logger = logging.getLogger("enterprise_agent.graph")
+    logger.info("node=agent request_id=%s", get_request_id() or "-")
     response = await llm.ainvoke(state["messages"])
 
     return {
@@ -48,7 +52,9 @@ if __name__ == "__main__":
 
     initial_input = {
         "messages": [
-            HumanMessage("Hello, describe the power of agentic workflows in one sentence.")
+            HumanMessage(
+                "Hello, describe the power of agentic workflows in one sentence."
+            )
         ],
         "status": "starting",
     }
