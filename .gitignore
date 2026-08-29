@@ -36,4 +36,6 @@ htmlcov/
 .idea/
 .DS_Store
 
+# Exclude local files
 docs/.labs
+docs/.sample-responses

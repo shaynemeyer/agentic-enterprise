@@ -11,6 +11,8 @@ dependencies = [
     "langgraph>=0.2.20",
     "langchain-openai>=0.2.0",
     "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "asyncpg>=0.31.0",
 ]
 
 [dependency-groups]
@@ -23,6 +25,10 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency injection puts Depends()/Security() in argument defaults by design.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query", "fastapi.Path", "fastapi.Header", "fastapi.Cookie"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

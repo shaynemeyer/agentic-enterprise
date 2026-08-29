@@ -11,3 +11,22 @@ services:
       - .:/app:z
     userns_mode: "keep-id:uid=1001,gid=1001"
     restart: unless-stopped
+    depends_on:
+      - db
+
+  db:
+    image: postgres:17-alpine
+    container_name: langgraph_enterprise_db
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent_db
+    ports:
+      # Host 5433 (not 5432) so a dev's native Postgres does not collide.
+      # Inside the compose network, other services still use db:5432.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+volumes:
+  pgdata:
