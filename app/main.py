@@ -3,9 +3,14 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from langgraph.errors import GraphRecursionError
 
 from app.api.v1 import endpoints, health
+from app.core.exceptions import AgenticException, MaxRecursionError
+from app.schemas.errors import ErrorResponse
 
 from .graph.engine import workflow
 from .schemas.agent_schema import SmokeTestRequest, SmokeTestResponse
@@ -33,6 +38,36 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(AgenticException)
+async def handle_agentic_exception(request: Request, exc: AgenticException):
+    logger.warning("agentic failure: %s (%s)", exc.message, exc.error_code)
+    body = ErrorResponse(
+        error_code=exc.error_code, message=exc.message, details=exc.details
+    )
+    return JSONResponse(
+        status_code=exc.status_code, content=body.model_dump(mode="json")
+    )
+
+
+@app.exception_handler(GraphRecursionError)
+async def handle_graph_recursion(request: Request, exc: GraphRecursionError):
+    # Translate LangGraph's own exception into our schema.
+    return await handle_agentic_exception(
+        request, MaxRecursionError(details={"source": "langgraph"})
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, exc: RequestValidationError):
+    body = ErrorResponse(
+        error_code="VALIDATION_ERROR",
+        message="Request body failed validation.",
+        details=exc.errors(),
+    )
+    return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
+
 
 app.include_router(health.router)
 app.include_router(endpoints.router, prefix="/api/v1")

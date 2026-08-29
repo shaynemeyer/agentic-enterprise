@@ -1,9 +1,11 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends
 from langchain_core.messages import HumanMessage
+from langgraph.errors import GraphRecursionError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AgenticException, MaxRecursionError
 from app.database import get_db
 from app.graph.engine import workflow
 from app.models import AgentExecution
@@ -50,7 +52,11 @@ async def run_agent(
             output=result["messages"][-1].content,
             status="success",
         )
-    except Exception:
-        logger.exception("agent run failed")
+    except GraphRecursionError:
         execution.status = "failed"
-        raise HTTPException(status_code=500, detail="Agent execution failed")
+        raise MaxRecursionError(details={"agent_id": payload.agent_id})
+    except AgenticException:
+        execution.status = "failed"
+        raise
+    # No bare `except Exception`. An unexpected error becomes a 500 via the
+    # framework default; the `get_db` dependency still rolls back the session.
