@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
-from app.api.v1 import health
+from app.api.v1 import endpoints, health
 
-from .graph.graph_core import workflow
-from .schemas.schemas import SmokeTestRequest, SmokeTestResponse
+from .graph.engine import workflow
+from .schemas.agent_schema import SmokeTestRequest, SmokeTestResponse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +35,7 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(endpoints.router, prefix="/api/v1")
 
 
 @app.get("/")
