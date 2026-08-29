@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.schemas import SmokeTestRequest, SmokeTestResponse
+from app.schemas.agent_schema import SmokeTestRequest, SmokeTestResponse
 
 
 def test_smoke_test_request_requires_test_id():

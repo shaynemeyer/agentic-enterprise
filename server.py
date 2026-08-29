@@ -13,7 +13,7 @@ class AgentResponse(BaseModel):
 
 from fastapi import FastAPI, HTTPException
 
-from app.graph.graph_core import workflow as graph
+from app.graph.engine import workflow as graph
 
 app = FastAPI(title="Enterprise Agentic Gateway V1")
 

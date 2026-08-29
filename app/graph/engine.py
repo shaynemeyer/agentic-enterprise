@@ -1,5 +1,6 @@
 from typing import Annotated, TypedDict
 
+from langchain_core.messages import BaseMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.core.llm import get_sovereign_llm
@@ -7,7 +8,7 @@ from app.core.llm import get_sovereign_llm
 
 class AgentState(TypedDict):
     # The 'messages' key will store our conversation history
-    messages: Annotated[list[str], "The conversation history"]
+    messages: Annotated[list[BaseMessage], "The conversation history"]
 
     # We can add metadata like 'status' to track execution
     status: str
@@ -16,10 +17,9 @@ class AgentState(TypedDict):
 llm = get_sovereign_llm()
 
 
-def call_model(state: AgentState) -> dict:
-    """Invoke the LLM on the latest message and append its reply to state."""
-    prompt = state["messages"][-1]
-    response = llm.invoke(prompt)
+async def call_model(state: AgentState) -> dict:
+    """Invoke the LLM on the conversation so far and append its reply to state."""
+    response = await llm.ainvoke(state["messages"])
 
     return {
         "messages": state["messages"] + [response],
@@ -44,8 +44,12 @@ graph_builder.add_edge("agent", END)
 workflow = graph_builder.compile()
 
 if __name__ == "__main__":
+    from langchain_core.messages import HumanMessage
+
     initial_input = {
-        "messages": ["Hello, describe the power of agentic workflows in one sentence."],
+        "messages": [
+            HumanMessage("Hello, describe the power of agentic workflows in one sentence.")
+        ],
         "status": "starting",
     }
 
