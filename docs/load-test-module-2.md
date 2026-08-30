@@ -36,16 +36,16 @@ routes are there to generate realistic contention around it.
 
 ## Test parameters
 
-| Setting            | Value                                          |
-|--------------------|------------------------------------------------|
-| Tool               | Locust (`uv add --dev locust`), `locustfile.py` at repo root |
-| Target             | `http://localhost:8000` (host-published `agent-api`) |
-| Virtual users      | 50                                             |
-| Spawn rate         | ~10/s (all 50 active within ~10 s)             |
-| Duration           | 3 min 51 s                                     |
-| Task mix           | `ask` :3, `health` :2, `run_agent` :1          |
-| Auth               | every user logs in as the same `admin` (`DEMO_PASSWORD`) |
-| Graph              | real - `workflow` compiled against the live LLM at `LLM_BASE_URL`, no stub |
+| Setting       | Value                                                                      |
+| ------------- | -------------------------------------------------------------------------- |
+| Tool          | Locust (`uv add --dev locust`), `locustfile.py` at repo root               |
+| Target        | `http://localhost:8000` (host-published `agent-api`)                       |
+| Virtual users | 50                                                                         |
+| Spawn rate    | ~10/s (all 50 active within ~10 s)                                         |
+| Duration      | 3 min 51 s                                                                 |
+| Task mix      | `ask` :3, `health` :2, `run_agent` :1                                      |
+| Auth          | every user logs in as the same `admin` (`DEMO_PASSWORD`)                   |
+| Graph         | real - `workflow` compiled against the live LLM at `LLM_BASE_URL`, no stub |
 
 All 50 users sharing one `admin` identity is deliberate: it puts every
 rate-limited request into **one** `5/minute` bucket, so the limiter is under
@@ -53,13 +53,13 @@ maximum pressure.
 
 ## Headline results
 
-| Endpoint            | Requests | Failures | Fail % | p50   | p95    | p99     | max     | RPS  |
-|---------------------|---------:|---------:|-------:|------:|-------:|--------:|--------:|-----:|
-| `GET /health`       |    1,938 |        0 |   0.0% |  4 ms |  36 ms |  550 ms |   1.5 s |  8.4 |
-| `POST /api/v1/token`|      ~50 |        0 |   0.0% |150 ms | 370 ms |  370 ms |  370 ms |  -   |
-| `GET /api/v1/ask`   |    2,872 |    2,852 |  99.3% |  5 ms |  42 ms |   1.1 s |   129 s | 12.4 |
-| `POST /api/v1/run`  |      955 |      942 |  98.6% |  6 ms | 110 ms |   111 s |   162 s |  4.1 |
-| **Aggregated**      |    5,815 |    3,794 |  65.2% |  5 ms |  60 ms |   1.1 s |   162 s | 25.1 |
+| Endpoint             | Requests | Failures | Fail % |    p50 |    p95 |    p99 |    max |  RPS |
+| -------------------- | -------: | -------: | -----: | -----: | -----: | -----: | -----: | ---: |
+| `GET /health`        |    1,938 |        0 |   0.0% |   4 ms |  36 ms | 550 ms |  1.5 s |  8.4 |
+| `POST /api/v1/token` |      ~50 |        0 |   0.0% | 150 ms | 370 ms | 370 ms | 370 ms |    - |
+| `GET /api/v1/ask`    |    2,872 |    2,852 |  99.3% |   5 ms |  42 ms |  1.1 s |  129 s | 12.4 |
+| `POST /api/v1/run`   |      955 |      942 |  98.6% |   6 ms | 110 ms |  111 s |  162 s |  4.1 |
+| **Aggregated**       |    5,815 |    3,794 |  65.2% |   5 ms |  60 ms |  1.1 s |  162 s | 25.1 |
 
 **Every one of the 3,794 failures is HTTP `429 Too Many Requests`.** No `5xx`,
 no connection resets, no dropped requests, no Python exceptions.
@@ -90,7 +90,7 @@ drove this to 0% failures would mean the limiter had stopped working.
 
 ### 2. Multi-minute p99 / max on `/ask` and `/run`
 
-The ~20 requests per route that got *past* the limiter went to the real
+The ~20 requests per route that got _past_ the limiter went to the real
 LangGraph workflow, which called the model at `LLM_BASE_URL`. Those waits are
 the LLM, not the app:
 
@@ -117,7 +117,7 @@ Response-time percentiles (ms)
 ```
 
 `/run` p99 being 111 s is an artifact of the tiny successful-request count -
-with only ~13 samples, the 99th percentile *is* essentially the slowest one.
+with only ~13 samples, the 99th percentile _is_ essentially the slowest one.
 It says nothing about the app.
 
 ## The number that matters: `/health` over time
@@ -186,7 +186,7 @@ the async path (event loop, Postgres pool, Redis connection) broke or degraded.
   LLM, so this run says little about those routes' own overhead. To measure
   that, point `LLM_BASE_URL` at a fast echo model for the duration of the test.
 - **50 users is modest.** The `/health` p95 stayed flat here; the next question
-  is where it *stops* being flat. A ramp to 200, 500, 1000 users would find the
+  is where it _stops_ being flat. A ramp to 200, 500, 1000 users would find the
   actual knee.
 - **Single machine, single API replica.** No horizontal scaling, no real
   network. This measures the app, not a deployment.

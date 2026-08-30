@@ -1,4 +1,4 @@
-# How `app/graph/graph_core.py` Works
+# How `app/graph/engine.py` Works
 
 ## State schema
 
@@ -7,7 +7,7 @@ graph. Every node reads it and returns a partial update to it.
 
 ```python
 class AgentState(TypedDict):
-    messages: Annotated[list[str], "The conversation history"]
+    messages: Annotated[list[BaseMessage], "The conversation history"]
     status: str
 ```
 
@@ -28,18 +28,24 @@ flowchart LR
 ## What `call_model` does
 
 ```python
-def call_model(state: AgentState) -> dict:
-    prompt = state["messages"][-1]
-    response = llm.invoke(prompt)
+async def call_model(state: AgentState) -> dict:
+    writer = get_stream_writer()
+    writer({"status": "invoking model"})
+    response = await llm.ainvoke(state["messages"])
+    writer({"status": "model responded"})
     return {
         "messages": state["messages"] + [response],
         "status": "completed",
     }
 ```
 
-1. Takes the last message in state as the prompt.
-2. Calls the LLM (Ollama/vLLM via `get_sovereign_llm()`) — the real network call.
-3. Returns an update: `messages` with the LLM's `AIMessage` response appended,
+1. Passes the whole message history to the LLM (Ollama/vLLM via
+   `get_sovereign_llm()`) — the real network call, `await`ed so the event loop
+   stays free.
+2. Emits `{"status": ...}` custom events through `get_stream_writer()` — these
+   are what `POST /api/v1/run/stream` forwards to the client as SSE. Outside a
+   streaming context the writes are no-ops.
+3. Returns an update: `messages` with the LLM's `AIMessage` appended,
    `status` set to `"completed"`.
 
 LangGraph merges a node's returned dict into existing state per key. There's
@@ -68,19 +74,20 @@ sequenceDiagram
     participant LLM as Ollama / vLLM
 
     Client->>FastAPI: POST request
-    FastAPI->>Graph: invoke(initial_state) / await ainvoke(initial_state)
+    FastAPI->>Graph: await ainvoke(initial_state) / astream(...)
     Graph->>Graph: START -> agent
-    Graph->>LLM: llm.invoke(prompt)
+    Graph->>LLM: await llm.ainvoke(messages)
     LLM-->>Graph: AIMessage response
     Graph->>Graph: agent -> END
-    Graph-->>FastAPI: final_state
+    Graph-->>FastAPI: final_state (or streamed events)
     FastAPI-->>Client: response
 ```
 
-| Caller                        | Method                                    | Notes                                                                                                                                                                |
-| ----------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/main.py` (`/test/smoke`) | `await workflow.ainvoke(initial_state)`   | async; used by the smoke-test route                                                                                                                                  |
-| `server.py` (`/run-agent`)    | `graph.invoke(initial_state, config=...)` | sync; passes `thread_id` in `config`, but since there's no checkpointer attached, that `thread_id` is currently inert — no memory is actually persisted across calls |
+| Caller                                            | Method                                                        | Notes                                                |
+| ------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------- |
+| `app/main.py` — `/test/smoke`                     | `await workflow.ainvoke(state)` wrapped in `asyncio.wait_for` | open route, 60 s timeout                             |
+| `app/api/v1/endpoints.py` — `/api/v1/run`, `/ask` | `await workflow.ainvoke(state)`                               | authenticated, rate-limited; `/ask` result is cached |
+| `app/api/v1/endpoints.py` — `/api/v1/run/stream`  | `async for … in workflow.astream(state, stream_mode=...)`     | streams `call_model`'s writer events as SSE          |
 
 ## Standalone script
 
