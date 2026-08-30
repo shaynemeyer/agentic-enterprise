@@ -1,20 +1,26 @@
 import logging
+import operator
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
 
 
 class AgentState(TypedDict):
-    # The 'messages' key will store our conversation history
-    messages: Annotated[list[BaseMessage], "The conversation history"]
+    # add_messages: append new messages, replace existing ones by id.
+    messages: Annotated[list[BaseMessage], add_messages]
 
-    # We can add metadata like 'status' to track execution
+    # No reducer -> overwrite. Only the latest status matters.
     status: str
+
+    # operator.add on a plain list -> append-only. An audit trail every
+    # node can add a line to without reading the existing list first.
+    internal_logs: Annotated[list[str], operator.add]
 
 
 llm = get_sovereign_llm()
@@ -33,8 +39,9 @@ async def call_model(state: AgentState) -> dict:
     writer({"status": "model responded"})
 
     return {
-        "messages": state["messages"] + [response],
+        "messages": [response],
         "status": "completed",
+        "internal_logs": ["agent: model call complete"],
     }
 
 
@@ -55,6 +62,8 @@ graph_builder.add_edge("agent", END)
 workflow = graph_builder.compile()
 
 if __name__ == "__main__":
+    import asyncio
+
     from langchain_core.messages import HumanMessage
 
     initial_input = {
@@ -66,8 +75,9 @@ if __name__ == "__main__":
         "status": "starting",
     }
 
-    final_state = workflow.invoke(initial_input)
+    final_state = asyncio.run(workflow.ainvoke(initial_input))
 
+    print(f"Logs: {final_state['internal_logs']}")
     print("--- Final Agent State ---")
     print(f"Status: {final_state['status']}")
-    print(f"Response: {final_state['messages'][-1]}")
+    print(f"Response: {final_state['messages'][-1].content}")
