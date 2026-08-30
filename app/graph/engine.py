@@ -14,18 +14,16 @@ from app.graph.tools import tools
 
 
 class AgentState(TypedDict):
-    # add_messages: append new messages, replace existing ones by id.
     messages: Annotated[list[BaseMessage], add_messages]
-
-    # No reducer -> overwrite. Only the latest status matters.
     status: str
-
-    # operator.add on a plain list -> append-only. An audit trail every
-    # node can add a line to without reading the existing list first.
     internal_logs: Annotated[list[str], operator.add]
-
-    # No reducer -> overwrite. Router writes it once; downstream reads it.
     route_to: Literal["technical", "billing", "general"]
+    # No reducer -> overwrite. The general worker reads the current value and
+    # returns current + 1; the critic reads it to decide whether to stop.
+    revision_count: int
+    # No reducer -> overwrite. The critic's note back to the worker; "" on the
+    # first pass, "PASS" once the draft clears the bar.
+    critique: str
 
 
 llm = get_sovereign_llm().bind_tools(tools)
@@ -88,12 +86,76 @@ async def billing_worker(state: AgentState) -> dict:
 
 
 async def general_worker(state: AgentState) -> dict:
-    """Terminal node for general inquiries. Stubbed."""
-    reply = AIMessage("General enquiries desk. A stub - no knowledge base wired yet.")
+    """Draft a general-enquiries answer. Re-entered by the critic loop."""
+    logger = logging.getLogger("enterprise_agent.graph")
+
+    count = state.get("revision_count", 0)
+    note = state.get("critique", "")
+
+    # Stub answer. A real worker would call a retrieval step here; the point of
+    # this is the loop, not the content. The draft "improves" only in that
+    # it acknowledges the critic's note on a re-run.
+    if note and note != "PASS":
+        reply = AIMessage(f"General enquiries desk (revised). Addressing: {note}")
+    else:
+        reply = AIMessage(
+            "General enquiries desk. A stub - no knowledge base wired yet."
+        )
+
+    logger.info(
+        "node=general request_id=%s attempt=%d", get_request_id() or "-", count + 1
+    )
+
+    writer = get_stream_writer()
+    writer({"status": f"general draft attempt {count + 1}"})
+
     return {
         "messages": [reply],
-        "status": "completed",
-        "internal_logs": ["general: stub reply"],
+        "status": "drafted",
+        "revision_count": count + 1,
+        "internal_logs": [f"general: draft attempt {count + 1}"],
+    }
+
+
+GENERAL_REVISION_LIMIT = 3
+
+
+async def critic(state: AgentState) -> dict:
+    """Grade the general worker's latest draft. Terminal decision lives in the edge."""
+    logger = logging.getLogger("enterprise_agent.graph")
+
+    draft = state["messages"][-1].content
+    count = state["revision_count"]
+
+    # Deterministic bar: the draft must be more than a bare stub.
+    # A real critic would score relevance / grounding with an LLM call.
+    passes = "revised" in draft.lower() or len(draft) > 90
+
+    if passes:
+        verdict = "PASS"
+    elif count >= GENERAL_REVISION_LIMIT:
+        verdict = "PASS"  # out of attempts - ship what we have
+        logger.warning(
+            "node=critic request_id=%s revision limit hit, forcing PASS",
+            get_request_id() or "-",
+        )
+    else:
+        verdict = "draft is a bare stub; add detail"
+
+    logger.info(
+        "node=critic request_id=%s attempt=%d verdict=%s",
+        get_request_id() or "-",
+        count,
+        verdict,
+    )
+
+    writer = get_stream_writer()
+    writer({"status": f"critic verdict: {verdict}"})
+
+    return {
+        "critique": verdict,
+        "status": "critiqued",
+        "internal_logs": [f"critic: attempt {count} -> {verdict}"],
     }
 
 
@@ -107,28 +169,32 @@ def pick_route(state: AgentState) -> Literal["agent", "billing", "general"]:
     return "general"
 
 
-# Initialize the Graph with our State schema
+def after_critic(state: AgentState) -> Literal["general", "__end__"]:
+    """PASS -> stop; anything else -> back to the general worker."""
+    if state["critique"] == "PASS":
+        return END
+    return "general"
+
+
 graph_builder = StateGraph(AgentState)
 
-# Add our node to the graph
 graph_builder.add_node("router", route_request)
 graph_builder.add_node("agent", call_model)
 graph_builder.add_node("tools", ToolNode(tools))
 graph_builder.add_node("billing", billing_worker)
 graph_builder.add_node("general", general_worker)
+graph_builder.add_node("critic", critic)
 
-# Define the flow:
 graph_builder.add_edge(START, "router")
-
-# The new conditional edge: router -> one of three nodes, on route_to.
 graph_builder.add_conditional_edges("router", pick_route)
 
-# if the last message has tool_calls -> "tools", else -> END.
 graph_builder.add_conditional_edges("agent", tools_condition)
 graph_builder.add_edge("tools", "agent")
 
 graph_builder.add_edge("billing", END)
-graph_builder.add_edge("general", END)
+
+graph_builder.add_edge("general", "critic")
+graph_builder.add_conditional_edges("critic", after_critic)
 
 # Compile the graph into an executable workflow
 workflow = graph_builder.compile()
