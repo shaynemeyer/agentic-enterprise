@@ -6,9 +6,11 @@ from langchain_core.messages import BaseMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
+from app.graph.tools import tools
 
 
 class AgentState(TypedDict):
@@ -23,7 +25,7 @@ class AgentState(TypedDict):
     internal_logs: Annotated[list[str], operator.add]
 
 
-llm = get_sovereign_llm()
+llm = get_sovereign_llm().bind_tools(tools)
 
 
 async def call_model(state: AgentState) -> dict:
@@ -45,20 +47,26 @@ async def call_model(state: AgentState) -> dict:
     }
 
 
-# 1. Initialize the Graph with our State schema
+# Initialize the Graph with our State schema
 graph_builder = StateGraph(AgentState)
 
 
-# 2. Add our node to the graph
+# Add our node to the graph
 graph_builder.add_node("agent", call_model)
 
+graph_builder.add_node("tools", ToolNode(tools))
 
-# 3. Define the flow: Start -> Agent -> End
+# Define the flow:
 graph_builder.add_edge(START, "agent")
-graph_builder.add_edge("agent", END)
+
+# After 'agent': if the last message has tool_calls -> "tools", else -> END.
+graph_builder.add_conditional_edges("agent", tools_condition)
+
+# After a tool runs, go back to 'agent' to use the result.
+graph_builder.add_edge("tools", "agent")
 
 
-# 4. Compile the graph into an executable workflow
+# Compile the graph into an executable workflow
 workflow = graph_builder.compile()
 
 if __name__ == "__main__":
@@ -67,17 +75,12 @@ if __name__ == "__main__":
     from langchain_core.messages import HumanMessage
 
     initial_input = {
-        "messages": [
-            HumanMessage(
-                "Hello, describe the power of agentic workflows in one sentence."
-            )
-        ],
+        "messages": [HumanMessage("What version is agent-api running?")],
         "status": "starting",
     }
 
-    final_state = asyncio.run(workflow.ainvoke(initial_input))
+    async def _main() -> None:
+        async for step in workflow.astream(initial_input, stream_mode="values"):
+            step["messages"][-1].pretty_print()
 
-    print(f"Logs: {final_state['internal_logs']}")
-    print("--- Final Agent State ---")
-    print(f"Status: {final_state['status']}")
-    print(f"Response: {final_state['messages'][-1].content}")
+    asyncio.run(_main())
