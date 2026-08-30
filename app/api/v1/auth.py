@@ -1,7 +1,7 @@
 """OAuth2 password-flow login and the `get_current_user` dependency."""
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
@@ -73,3 +73,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
     if username not in _USERS:
         raise _credentials_error
     return CurrentUser(username=username)
+
+
+def user_key(request: Request) -> str:
+    """Rate-limit bucket key: the JWT subject, or the client IP if unauthenticated.
+
+    slowapi calls this with the raw Request, before/around the dependency graph,
+    so it cannot use Depends(get_current_user). An unauthenticated request will be
+    rejected by get_current_user anyway; keying it by IP just keeps the buckets
+    tidy until then.
+    """
+    auth = request.headers.get("Authorization", "")
+    scheme, _, token = auth.partition(" ")
+    if scheme.lower() == "bearer" and token:
+        try:
+            return decode_subject(token)
+        except jwt.InvalidTokenError:
+            pass
+    return request.client.host if request.client else "anonymous"

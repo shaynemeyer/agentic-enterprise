@@ -20,5 +20,8 @@ class Settings(BaseSettings):
     demo_username: str = "admin"
     demo_password: str = ""
 
+    # Host default; compose overrides with redis://redis:6379/0 (see compose.yaml).
+    redis_url: str = "redis://localhost:6379/0"
+
 
 settings = Settings()

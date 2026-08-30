@@ -6,7 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
 from langgraph.errors import GraphRecursionError
+from redis import asyncio as redis_asyncio
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import auth, endpoints, health
 from app.core.context import (
@@ -15,7 +19,9 @@ from app.core.context import (
     new_request_id,
     set_request_id,
 )
+from app.core.config import settings
 from app.core.exceptions import AgenticException, MaxRecursionError
+from app.core.security import limiter
 from app.schemas.errors import ErrorResponse
 
 from .graph.engine import workflow
@@ -45,7 +51,15 @@ SMOKE_TEST_TIMEOUT_S = 60
 async def lifespan(app: FastAPI):
     # Startup: LangGraph agents, vector DB clients, HTTP pools
     logger.info("Initializing Sovereign Agentic Core...")
+    try:
+        client = redis_asyncio.from_url(settings.redis_url)
+        await client.ping()
+        FastAPICache.init(RedisBackend(client), prefix="agent-cache")
+        logger.info("Response cache connected: %s", settings.redis_url)
+    except Exception as exc:  # noqa: BLE001 - startup must not hard-fail on cache
+        logger.warning("Response cache unavailable (%s); serving uncached", exc)
     yield
+
     # Shutdown: close connections, flush telemetry
     logger.info("Shutting down Sovereign Agentic Core...")
 
@@ -55,6 +69,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
 
 
 @app.middleware("http")
@@ -100,6 +116,24 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
         trace_id=get_request_id() or None,
     )
     return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
+
+
+@app.exception_handler(RateLimitExceeded)
+async def handle_rate_limit(request: Request, exc: RateLimitExceeded):
+    logger.warning("rate limit hit: %s", exc.detail)
+    # slowapi's RateLimitExceeded carries the Limit; its RateLimitItem knows the
+    # window length. "Wait at most one full window" is a correct Retry-After.
+    retry_after = exc.limit.limit.get_expiry()
+    body = ErrorResponse(
+        error_code="RATE_LIMIT_EXCEEDED",
+        message=f"Rate limit exceeded: {exc.detail}",
+        details={"limit": str(exc.detail)},
+        trace_id=get_request_id() or None,
+    )
+    headers = {"Retry-After": str(retry_after)}
+    return JSONResponse(
+        status_code=429, content=body.model_dump(mode="json"), headers=headers
+    )
 
 
 app.include_router(health.router)

@@ -13,6 +13,19 @@ services:
     restart: unless-stopped
     depends_on:
       - db
+      - redis
+    environment:
+      # In-network address. On the host, config defaults to localhost:6379.
+      REDIS_URL: "redis://redis:6379/0"
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: langgraph_enterprise_cache
+    ports:
+      # Host 6379 is Redis's default and unlikely to collide, but map it
+      # explicitly so a dev can inspect the cache with redis-cli / RedisInsight.
+      - "6379:6379"
+    restart: unless-stopped
 
   db:
     image: postgres:17-alpine

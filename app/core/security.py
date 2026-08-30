@@ -4,10 +4,16 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 from pwdlib import PasswordHash
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.config import settings
 
 _hasher = PasswordHash.recommended()
+
+# key_func here is only the fallback for routes that do not override it.
+# The protected run routes override it with the JWT subject (see auth.py).
+limiter = Limiter(key_func=get_remote_address)
 
 
 def hash_password(plain: str) -> str:
