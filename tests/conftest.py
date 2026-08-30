@@ -1,6 +1,95 @@
+"""Shared test fixtures: isolated app with no Postgres, no Redis, no LLM."""
+
 import os
 
-# app.core.config.Settings reads LLM_BASE_URL at import time. The app default is
-# localhost, but pin it here so tests stay reachable on the bare host even if a
-# container URL is ever set as the default or leaks in from the environment.
+# Must run before app.core.config imports it.
 os.environ.setdefault("LLM_BASE_URL", "http://localhost:11434/v1")
+
+import pytest
+import pytest_asyncio
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
+from httpx import ASGITransport, AsyncClient
+
+from app.api.v1 import endpoints
+from app.core.config import settings
+from app.database import get_db
+from app.main import app
+
+
+class _FakeSession:
+    """Async session stub - the run routes only ever call .add()."""
+
+    def add(self, _obj):
+        pass
+
+
+async def _fake_get_db():
+    yield _FakeSession()
+
+
+class _FakeWorkflow:
+    """Stubbed LangGraph. `calls` counts how many times the graph really ran,
+    which is how the cache tests prove a hit skipped the LLM."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, _state):
+        self.calls += 1
+        return {"messages": [type("M", (), {"content": "hi there friend"})()]}
+
+
+@pytest.fixture(autouse=True)
+def reset_shared_state():
+    """Empty the rate-limit counters and dependency overrides around every test."""
+    app.state.limiter.reset()
+    yield
+    app.state.limiter.reset()
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def fake_db():
+    """No test touches a real database."""
+    app.dependency_overrides[get_db] = _fake_get_db
+    yield
+
+
+@pytest.fixture
+def fake_workflow(monkeypatch):
+    """Swap the real graph for the counting stub; return it so a test can read
+    `.calls`."""
+    fake = _FakeWorkflow()
+    monkeypatch.setattr(endpoints, "workflow", fake)
+    return fake
+
+
+@pytest.fixture
+def cache():
+    """In-memory fastapi-cache2 backend - same semantics as Redis, no container."""
+    FastAPICache.init(InMemoryBackend(), prefix="test-cache")
+    yield
+    FastAPICache._backend = None
+    FastAPICache._init = False
+
+
+@pytest_asyncio.fixture
+async def client():
+    """AsyncClient wired straight to the ASGI app - no network."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def auth_headers(client):
+    """A Bearer header for the demo user. Skips the test if no DEMO_PASSWORD."""
+    if not settings.demo_password:
+        pytest.skip("no DEMO_PASSWORD in .env")
+    r = await client.post(
+        "/api/v1/token",
+        data={"username": settings.demo_username, "password": settings.demo_password},
+    )
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
