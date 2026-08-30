@@ -13,13 +13,13 @@ from redis import asyncio as redis_asyncio
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import auth, endpoints, health
+from app.core.config import settings
 from app.core.context import (
     REQUEST_ID_HEADER,
     get_request_id,
     new_request_id,
     set_request_id,
 )
-from app.core.config import settings
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.security import limiter
 from app.schemas.errors import ErrorResponse

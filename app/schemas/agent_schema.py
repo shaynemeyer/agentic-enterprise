@@ -36,6 +36,13 @@ class AgentResponse(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class AskResponse(BaseModel):
+    """Response for the cached GET /ask route. No trace id: /ask writes no execution row."""
+
+    query: str
+    output: str
+
+
 class SmokeTestRequest(BaseModel):
     test_id: str = Field(..., examples=["ST-2026-001"])
     payload: str = Field(default="System Check: Respond with 'READY'")

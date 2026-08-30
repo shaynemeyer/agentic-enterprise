@@ -14,7 +14,7 @@ from app.core.security import limiter
 from app.database import get_db
 from app.graph.engine import workflow
 from app.models import AgentExecution
-from app.schemas.agent_schema import AgentRequest, AgentResponse
+from app.schemas.agent_schema import AgentRequest, AgentResponse, AskResponse
 from app.schemas.stream import StreamEvent
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ async def run_agent(
     # framework default; the `get_db` dependency still rolls back the session.
 
 
-@router.get("/ask", response_model=AgentResponse)
+@router.get("/ask", response_model=AskResponse)
 @limiter.limit("5/minute", key_func=user_key)
 @cache(expire=300)
 async def ask(
@@ -132,8 +132,4 @@ async def ask(
     """
     initial_state = {"messages": [HumanMessage(q)]}
     result = await workflow.ainvoke(initial_state)
-    return AgentResponse(
-        request_id=q,
-        output=result["messages"][-1].content,
-        status="success",
-    )
+    return AskResponse(query=q, output=result["messages"][-1].content)
