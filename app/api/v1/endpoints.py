@@ -10,9 +10,11 @@ from sse_starlette import EventSourceResponse
 from app.api.v1.auth import CurrentUser, get_current_user, user_key
 from app.core.context import REQUEST_ID_HEADER, get_request_id
 from app.core.exceptions import AgenticException, MaxRecursionError
+from app.core.llm import get_sovereign_llm
 from app.core.security import limiter
 from app.database import get_db
 from app.graph.engine import workflow
+from app.graph.tools import tools
 from app.models import AgentExecution
 from app.schemas.agent_schema import AgentRequest, AgentResponse, AskResponse
 from app.schemas.stream import StreamEvent
@@ -50,8 +52,12 @@ async def run_agent_stream(
     async def events():
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
         try:
+            request_llm = get_sovereign_llm().bind_tools(tools)
+
             async for mode, chunk in workflow.astream(
-                initial_state, stream_mode=["updates", "custom"]
+                initial_state,
+                stream_mode=["updates", "custom"],
+                context={"llm": request_llm},
             ):
                 if mode == "custom":
                     ev = StreamEvent(phase="status", content=chunk["status"])
@@ -96,8 +102,10 @@ async def run_agent(
         # Crucial: Use ainvoke for non-blocking execution
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
 
+        request_llm = get_sovereign_llm().bind_tools(tools)
+
         # The engine works while the CPU handles other requests
-        result = await workflow.ainvoke(initial_state)
+        result = await workflow.ainvoke(initial_state, context={"llm": request_llm})
 
         background_tasks.add_task(log_agent_activity, payload.task_description)
         execution.status = "completed"
@@ -131,5 +139,8 @@ async def ask(
     the audit trail stays on POST /run. Use /run for anything that must be logged.
     """
     initial_state = {"messages": [HumanMessage(q)]}
-    result = await workflow.ainvoke(initial_state)
+
+    request_llm = get_sovereign_llm().bind_tools(tools)
+
+    result = await workflow.ainvoke(initial_state, context={"llm": request_llm})
     return AskResponse(query=q, output=result["messages"][-1].content)

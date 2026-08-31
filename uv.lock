@@ -454,7 +454,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langchain", specifier = ">=0.3.0" },
     { name = "langchain-openai", specifier = ">=0.2.0" },
-    { name = "langgraph", specifier = ">=0.2.20" },
+    { name = "langgraph", specifier = ">=1.2,<2" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.3.1" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
