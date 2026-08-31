@@ -1,11 +1,14 @@
 import logging
+from dataclasses import dataclass
 from typing import Annotated, Literal, TypedDict
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.runtime import Runtime
 
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
@@ -50,17 +53,27 @@ class GraphOutput(TypedDict):
     status: str
 
 
-llm = get_sovereign_llm().bind_tools(tools)
+@dataclass
+class RuntimeContext:
+    """Per-request dependencies injected by the caller via `config`.
+
+    Not part of state - the caller supplies this at invoke time, nodes only
+    read it. Lets one compiled graph serve different LLM backends, DB sessions,
+    or a no-network test double without touching module globals.
+    """
+
+    llm: BaseChatModel
 
 
-async def call_model(state: GraphState) -> dict:
-    """Invoke the LLM on the conversation so far and append its reply to state."""
+async def call_model(state: GraphState, runtime: Runtime[RuntimeContext]) -> dict:
+    """Invoke the LLM on the conversation so far."""
     logger = logging.getLogger("enterprise_agent.graph")
     logger.info("node=agent request_id=%s", get_request_id() or "-")
 
     writer = get_stream_writer()
     writer({"status": "invoking model"})
 
+    llm = runtime.context.llm
     response = await llm.ainvoke(state["messages"])
 
     writer({"status": "model responded"})
@@ -201,7 +214,10 @@ def after_critic(state: GraphState) -> Literal["general", "__end__"]:
 
 
 graph_builder = StateGraph(
-    GraphState, input_schema=GraphInput, output_schema=GraphOutput
+    GraphState,
+    input_schema=GraphInput,
+    output_schema=GraphOutput,
+    context_schema=RuntimeContext,
 )
 
 graph_builder.add_node("router", route_request)
@@ -248,12 +264,14 @@ if __name__ == "__main__":
     ]
 
     async def _main() -> None:
+        demo_llm = get_sovereign_llm().bind_tools(tools)
         for p in prompts:
             print(f"\n=== {p} ===")
             state = {"messages": [HumanMessage(p)], "status": "starting"}
             async for step in workflow.astream(
                 state,
                 stream_mode="values",
+                context={"llm": demo_llm},
                 output_keys=list(GraphState.__annotations__),
             ):
                 step["messages"][-1].pretty_print()
