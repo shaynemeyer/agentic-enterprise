@@ -225,6 +225,17 @@ graph_builder.add_conditional_edges("critic", after_critic)
 # Compile the graph into an executable workflow
 workflow = graph_builder.compile()
 
+
+def graph_mermaid() -> str:
+    """The compiled graph as a Mermaid flowchart. Regenerate docs from this."""
+    return workflow.get_graph().draw_mermaid()
+
+
+def graph_png() -> bytes:
+    """PNG of the compiled graph. Calls the mermaid.ink API - needs outbound HTTPS."""
+    return workflow.get_graph().draw_mermaid_png()
+
+
 if __name__ == "__main__":
     import asyncio
 
