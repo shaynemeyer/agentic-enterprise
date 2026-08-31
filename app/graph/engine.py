@@ -232,7 +232,9 @@ if __name__ == "__main__":
             print(f"\n=== {p} ===")
             state = {"messages": [HumanMessage(p)], "status": "starting"}
             async for step in workflow.astream(
-                state, stream_mode="values", output_schema=GraphState
+                state,
+                stream_mode="values",
+                output_keys=list(GraphState.__annotations__),
             ):
                 step["messages"][-1].pretty_print()
 
