@@ -1,5 +1,4 @@
 import logging
-import operator
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
@@ -13,6 +12,16 @@ from app.core.llm import get_sovereign_llm
 from app.graph.tools import tools
 
 
+def merge_logs(existing: list[str] | None, update: list[str]) -> list[str]:
+    """Append-only merge for internal_logs.
+
+    Concatenates like operator.add, but tolerates a None left side and skips
+    lines already present so a cyclic node re-entry cannot duplicate history.
+    """
+    base = existing or []
+    return base + [line for line in update if line not in base]
+
+
 class GraphInput(TypedDict):
     """What a caller is allowed to pass to the graph. Anything else is dropped."""
 
@@ -24,7 +33,7 @@ class GraphState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     status: str
-    internal_logs: Annotated[list[str], operator.add]
+    internal_logs: Annotated[list[str], merge_logs]
     route_to: Literal["technical", "billing", "general"]
     # No reducer -> overwrite. The general worker reads the current value and
     # returns current + 1; the critic reads it to decide whether to stop.
@@ -232,7 +241,9 @@ if __name__ == "__main__":
             print(f"\n=== {p} ===")
             state = {"messages": [HumanMessage(p)], "status": "starting"}
             async for step in workflow.astream(
-                state, stream_mode="values", output_schema=GraphState
+                state,
+                stream_mode="values",
+                output_keys=list(GraphState.__annotations__),
             ):
                 step["messages"][-1].pretty_print()
 
