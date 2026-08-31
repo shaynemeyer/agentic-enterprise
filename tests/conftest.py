@@ -2,6 +2,8 @@
 
 import os
 
+from app.graph import engine
+
 # Must run before app.core.config imports it.
 os.environ.setdefault("LLM_BASE_URL", "http://localhost:11434/v1")
 
@@ -38,6 +40,16 @@ class _FakeWorkflow:
     async def ainvoke(self, _state, *, context=None):
         self.calls += 1
         return {"messages": [type("M", (), {"content": "hi there friend"})()]}
+
+
+@pytest.fixture
+def no_stream(monkeypatch):
+    """Neutralise `get_stream_writer()` so a node can be called off-graph.
+
+    The real writer reads a contextvar that only `workflow.astream(...)` sets;
+    a direct node call has no runnable context. This swaps it for a sink.
+    """
+    monkeypatch.setattr(engine, "get_stream_writer", lambda: lambda _update: None)
 
 
 @pytest.fixture(autouse=True)
