@@ -13,7 +13,15 @@ from app.core.llm import get_sovereign_llm
 from app.graph.tools import tools
 
 
-class AgentState(TypedDict):
+class GraphInput(TypedDict):
+    """What a caller is allowed to pass to the graph. Anything else is dropped."""
+
+    messages: Annotated[list[BaseMessage], add_messages]
+
+
+class GraphState(TypedDict):
+    """The full shared scratchpad. Every node reads and writes this shape"""
+
     messages: Annotated[list[BaseMessage], add_messages]
     status: str
     internal_logs: Annotated[list[str], operator.add]
@@ -26,10 +34,17 @@ class AgentState(TypedDict):
     critique: str
 
 
+class GraphOutput(TypedDict):
+    """What the compiled graph returns. The scratchpad keys are not here."""
+
+    messages: Annotated[list[BaseMessage], add_messages]
+    status: str
+
+
 llm = get_sovereign_llm().bind_tools(tools)
 
 
-async def call_model(state: AgentState) -> dict:
+async def call_model(state: GraphState) -> dict:
     """Invoke the LLM on the conversation so far and append its reply to state."""
     logger = logging.getLogger("enterprise_agent.graph")
     logger.info("node=agent request_id=%s", get_request_id() or "-")
@@ -48,7 +63,7 @@ async def call_model(state: AgentState) -> dict:
     }
 
 
-async def route_request(state: AgentState) -> dict:
+async def route_request(state: GraphState) -> dict:
     """Classify the last human message and write the routing decision to state."""
     logger = logging.getLogger("enterprise_agent.graph")
 
@@ -75,7 +90,7 @@ async def route_request(state: AgentState) -> dict:
     }
 
 
-async def billing_worker(state: AgentState) -> dict:
+async def billing_worker(state: GraphState) -> dict:
     """Terminal node for billing requests. Stubbed."""
     reply = AIMessage("This is the billing department. A stub - no records wired yet.")
     return {
@@ -85,7 +100,7 @@ async def billing_worker(state: AgentState) -> dict:
     }
 
 
-async def general_worker(state: AgentState) -> dict:
+async def general_worker(state: GraphState) -> dict:
     """Draft a general-enquiries answer. Re-entered by the critic loop."""
     logger = logging.getLogger("enterprise_agent.graph")
 
@@ -120,7 +135,7 @@ async def general_worker(state: AgentState) -> dict:
 GENERAL_REVISION_LIMIT = 3
 
 
-async def critic(state: AgentState) -> dict:
+async def critic(state: GraphState) -> dict:
     """Grade the general worker's latest draft. Terminal decision lives in the edge."""
     logger = logging.getLogger("enterprise_agent.graph")
 
@@ -159,7 +174,7 @@ async def critic(state: AgentState) -> dict:
     }
 
 
-def pick_route(state: AgentState) -> Literal["agent", "billing", "general"]:
+def pick_route(state: GraphState) -> Literal["agent", "billing", "general"]:
     """Read the router's decision and name the next node."""
     decision = state.get("route_to", "general")
     if decision == "technical":
@@ -169,14 +184,16 @@ def pick_route(state: AgentState) -> Literal["agent", "billing", "general"]:
     return "general"
 
 
-def after_critic(state: AgentState) -> Literal["general", "__end__"]:
+def after_critic(state: GraphState) -> Literal["general", "__end__"]:
     """PASS -> stop; anything else -> back to the general worker."""
     if state["critique"] == "PASS":
         return END
     return "general"
 
 
-graph_builder = StateGraph(AgentState)
+graph_builder = StateGraph(
+    GraphState, input_schema=GraphInput, output_schema=GraphOutput
+)
 
 graph_builder.add_node("router", route_request)
 graph_builder.add_node("agent", call_model)
@@ -214,7 +231,9 @@ if __name__ == "__main__":
         for p in prompts:
             print(f"\n=== {p} ===")
             state = {"messages": [HumanMessage(p)], "status": "starting"}
-            async for step in workflow.astream(state, stream_mode="values"):
+            async for step in workflow.astream(
+                state, stream_mode="values", output_schema=GraphState
+            ):
                 step["messages"][-1].pretty_print()
 
     asyncio.run(_main())
