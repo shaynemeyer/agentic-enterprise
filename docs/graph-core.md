@@ -2,7 +2,7 @@
 
 ## State schemas
 
-The graph has three `TypedDict` schemas (Lab 25):
+The graph has three `TypedDict` schemas:
 
 - **`GraphInput`** — what a caller may pass in. Just `messages`.
 - **`GraphState`** — the full shared scratchpad every node reads and writes.
@@ -25,7 +25,7 @@ Reducers control how a node's returned value merges into state per key:
 - `messages` uses `add_messages` — append, de-duplicating by message id (Lab 21).
 - `internal_logs` uses `merge_logs` — a custom append-only reducer that tolerates
   a `None` left side and skips lines already present, so the `general <-> critic`
-  cycle cannot duplicate audit entries (Lab 26).
+  cycle cannot duplicate audit entries.
 - Keys with no `Annotated` reducer overwrite.
 
 Every node returns only its own delta (`{"messages": [response]}`,
