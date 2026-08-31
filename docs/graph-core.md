@@ -22,7 +22,7 @@ class GraphState(TypedDict):
 
 Reducers control how a node's returned value merges into state per key:
 
-- `messages` uses `add_messages` — append, de-duplicating by message id (Lab 21).
+- `messages` uses `add_messages` — append, de-duplicating by message id.
 - `internal_logs` uses `merge_logs` — a custom append-only reducer that tolerates
   a `None` left side and skips lines already present, so the `general <-> critic`
   cycle cannot duplicate audit entries.
