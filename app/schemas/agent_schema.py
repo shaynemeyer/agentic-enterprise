@@ -8,6 +8,11 @@ class AgentRequest(BaseModel):
     request_id: UUID = Field(
         default_factory=uuid4, description="Unique identifier for the agentic trace"
     )
+    conversation_id: str | None = Field(
+        default=None,
+        description="Thread key for cross-request memory. Reuse it to continue a "
+        "conversation; omit it for a one-shot request.",
+    )
     task_description: str = Field(
         ...,
         min_length=10,

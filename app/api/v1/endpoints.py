@@ -49,6 +49,8 @@ async def run_agent_stream(
     )
     db.add(execution)
 
+    thread_id = payload.conversation_id or str(payload.request_id)
+
     async def events():
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
         try:
@@ -58,6 +60,7 @@ async def run_agent_stream(
                 initial_state,
                 stream_mode=["updates", "custom"],
                 context={"llm": request_llm},
+                config={"configurable": {"thread_id": thread_id}},
             ):
                 if mode == "custom":
                     ev = StreamEvent(phase="status", content=chunk["status"])
@@ -98,6 +101,8 @@ async def run_agent(
     )
     db.add(execution)
 
+    thread_id = payload.conversation_id or str(payload.request_id)
+
     try:
         # Crucial: Use ainvoke for non-blocking execution
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
@@ -105,7 +110,11 @@ async def run_agent(
         request_llm = get_sovereign_llm().bind_tools(tools)
 
         # The engine works while the CPU handles other requests
-        result = await workflow.ainvoke(initial_state, context={"llm": request_llm})
+        result = await workflow.ainvoke(
+            initial_state,
+            context={"llm": request_llm},
+            config={"configurable": {"thread_id": thread_id}},
+        )
 
         background_tasks.add_task(log_agent_activity, payload.task_description)
         execution.status = "completed"
@@ -142,5 +151,11 @@ async def ask(
 
     request_llm = get_sovereign_llm().bind_tools(tools)
 
-    result = await workflow.ainvoke(initial_state, context={"llm": request_llm})
+    # No request_id on this route - key the thread per user so a user's /ask
+    # calls share one conversation. (Cache hits skip the graph entirely.)
+    result = await workflow.ainvoke(
+        initial_state,
+        context={"llm": request_llm},
+        config={"configurable": {"thread_id": f"ask:{user.username}"}},
+    )
     return AskResponse(query=q, output=result["messages"][-1].content)

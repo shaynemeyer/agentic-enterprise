@@ -4,6 +4,7 @@ from typing import Annotated, Literal, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -238,8 +239,10 @@ graph_builder.add_edge("billing", END)
 graph_builder.add_edge("general", "critic")
 graph_builder.add_conditional_edges("critic", after_critic)
 
-# Compile the graph into an executable workflow
-workflow = graph_builder.compile()
+# In-memory thread-level memory. Volatile - state lives in this process only
+# and is lost on restart.
+checkpointer = InMemorySaver()
+workflow = graph_builder.compile(checkpointer=checkpointer)
 
 
 def graph_mermaid() -> str:

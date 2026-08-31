@@ -37,7 +37,7 @@ class _FakeWorkflow:
     def __init__(self):
         self.calls = 0
 
-    async def ainvoke(self, _state, *, context=None):
+    async def ainvoke(self, _state, *, context=None, config=None):
         self.calls += 1
         return {"messages": [type("M", (), {"content": "hi there friend"})()]}
 

@@ -154,7 +154,11 @@ async def run_smoke_test(request: SmokeTestRequest):
         # Invoking the LangGraph workflow
         initial_state = {"messages": [("user", request.payload)]}
         result = await asyncio.wait_for(
-            workflow.ainvoke(initial_state), timeout=SMOKE_TEST_TIMEOUT_S
+            workflow.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": f"smoke:{request.test_id}"}},
+            ),
+            timeout=SMOKE_TEST_TIMEOUT_S,
         )
 
         end_time = time.perf_counter()
