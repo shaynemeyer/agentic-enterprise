@@ -20,6 +20,7 @@ async def test_technical_message_routes_through_the_agent():
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("the deploy logs show an error in agent-api")]},
         context={"llm": _fake("restarted the service")},
+        config={"configurable": {"thread_id": "milestone-technical"}},
     )
     assert result["messages"][-1].content == "restarted the service"
     assert result["status"] == "completed"
@@ -31,6 +32,7 @@ async def test_billing_message_routes_to_the_billing_worker():
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("my invoice has the wrong charge on it")]},
         context={"llm": _fake()},
+        config={"configurable": {"thread_id": "milestone-billing"}},
     )
     assert "billing department" in result["messages"][-1].content
     assert result["status"] == "completed"
@@ -45,6 +47,7 @@ async def test_general_message_runs_the_critic_loop_to_a_pass():
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("hello, I have a general question")]},
         context={"llm": _fake()},
+        config={"configurable": {"thread_id": "milestone-general"}},
     )
     assert "general enquiries desk" in result["messages"][-1].content.lower()
     assert result["status"] == "critiqued"
@@ -59,6 +62,7 @@ async def test_general_path_stays_within_the_revision_limit():
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("just a general enquiry please")]},
         context={"llm": _fake()},
+        config={"configurable": {"thread_id": "milestone-revision-limit"}},
     )
     # 4 general-desk turns max (initial + 3 revisions); the real cap is the
     # critic's force-pass, not recursion_limit.
