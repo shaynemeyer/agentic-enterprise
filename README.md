@@ -1,4 +1,4 @@
-# Agentic Enterprise Labs
+# Agentic Enterprise Platform
 
 An enterprise-grade platform for agents, built with LangChain/LangGraph and
 FastAPI, running against an OpenAI-compatible LLM backend (Ollama locally,
