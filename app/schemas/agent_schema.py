@@ -59,3 +59,13 @@ class SmokeTestResponse(BaseModel):
     llm_response: str
     latency_ms: float
     status: str = "PASS"
+
+
+class HistoryTurn(BaseModel):
+    role: str  # "human" | "ai" | "tool" - BaseMessage.type
+    content: str
+
+
+class ConversationHistory(BaseModel):
+    conversation_id: str
+    turns: list[HistoryTurn]

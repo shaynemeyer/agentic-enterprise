@@ -20,6 +20,10 @@ from app.core.context import (
     new_request_id,
     set_request_id,
 )
+
+from contextlib import AsyncExitStack
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.security import limiter
 from app.schemas.errors import ErrorResponse
@@ -45,23 +49,34 @@ for handler in logging.getLogger().handlers:
 logger = logging.getLogger("enterprise_agent")
 
 SMOKE_TEST_TIMEOUT_S = 60
+CHECKPOINT_DB = "var/checkpoints.db"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: LangGraph agents, vector DB clients, HTTP pools
     logger.info("Initializing Sovereign Agentic Core...")
-    try:
-        client = redis_asyncio.from_url(settings.redis_url)
-        await client.ping()
-        FastAPICache.init(RedisBackend(client), prefix="agent-cache")
-        logger.info("Response cache connected: %s", settings.redis_url)
-    except Exception as exc:  # noqa: BLE001 - startup must not hard-fail on cache
-        logger.warning("Response cache unavailable (%s); serving uncached", exc)
-    yield
 
-    # Shutdown: close connections, flush telemetry
-    logger.info("Shutting down Sovereign Agentic Core...")
+    async with AsyncExitStack() as stack:
+        # Persistent checkpointer: opened here, closed on shutdown by the stack.
+        saver = await stack.enter_async_context(
+            AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB)
+        )
+        await saver.setup()  # idempotent - CREATE TABLE IF NOT EXISTS
+        workflow.checkpointer = saver
+        logger.info("Checkpointer: SQLite at %s", CHECKPOINT_DB)
+
+        try:
+            client = redis_asyncio.from_url(settings.redis_url)
+            await client.ping()
+            FastAPICache.init(RedisBackend(client), prefix="agent-cache")
+            logger.info("Response cache connected: %s", settings.redis_url)
+        except Exception as exc:  # noqa: BLE001 - startup must not hard-fail on cache
+            logger.warning("Response cache unavailable (%s); serving uncached", exc)
+        yield
+
+        # Shutdown: close connections, flush telemetry
+        logger.info("Shutting down Sovereign Agentic Core...")
 
 
 app = FastAPI(

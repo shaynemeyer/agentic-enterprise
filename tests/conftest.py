@@ -2,6 +2,8 @@
 
 import os
 
+from langchain.messages import AIMessage, HumanMessage
+
 from app.graph import engine
 
 # Must run before app.core.config imports it.
@@ -17,6 +19,12 @@ from app.api.v1 import endpoints
 from app.core.config import settings
 from app.database import get_db
 from app.main import app
+
+
+class _FakeState:
+    def __init__(self, values):
+        self.values = values
+        self.next = ()
 
 
 class _FakeSession:
@@ -40,6 +48,11 @@ class _FakeWorkflow:
     async def ainvoke(self, _state, *, context=None, config=None):
         self.calls += 1
         return {"messages": [type("M", (), {"content": "hi there friend"})()]}
+
+    async def aget_state(self, _config):
+        return _FakeState(
+            {"messages": [HumanMessage("prior question"), AIMessage("prior answer")]}
+        )
 
 
 @pytest.fixture

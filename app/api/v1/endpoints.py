@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi_cache.decorator import cache
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse
@@ -16,7 +16,13 @@ from app.database import get_db
 from app.graph.engine import workflow
 from app.graph.tools import tools
 from app.models import AgentExecution
-from app.schemas.agent_schema import AgentRequest, AgentResponse, AskResponse
+from app.schemas.agent_schema import (
+    AgentRequest,
+    AgentResponse,
+    AskResponse,
+    ConversationHistory,
+    HistoryTurn,
+)
 from app.schemas.stream import StreamEvent
 
 logger = logging.getLogger(__name__)
@@ -159,3 +165,21 @@ async def ask(
         config={"configurable": {"thread_id": f"ask:{user.username}"}},
     )
     return AskResponse(query=q, output=result["messages"][-1].content)
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationHistory)
+async def get_conversation(
+    conversation_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Replay a thread's messages from the persistent checkpoint store.
+
+    Reads the latest checkpoint for this thread_id - no graph run. Returns an
+    empty list if the thread was never written or has been pruned.
+    """
+    config = {"configurable": {"thread_id": conversation_id}}
+    snapshot = await workflow.aget_state(config)
+
+    messages: list[BaseMessage] = snapshot.values.get("messages", [])
+    turns = [HistoryTurn(role=m.type, content=str(m.content)) for m in messages]
+    return ConversationHistory(conversation_id=conversation_id, turns=turns)
