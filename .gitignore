@@ -39,3 +39,6 @@ htmlcov/
 # Exclude local files
 docs/.labs
 docs/.sample-responses
+
+# Exclude backups for devs
+.db-backups

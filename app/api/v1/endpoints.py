@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse
 
 from app.api.v1.auth import CurrentUser, get_current_user, user_key
+from app.core.config import settings
 from app.core.context import REQUEST_ID_HEADER, get_request_id
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.llm import get_sovereign_llm
 from app.core.security import limiter
 from app.database import get_db
 from app.graph.engine import workflow
+from app.graph.gc import _conn, sweep
 from app.graph.tools import tools
 from app.models import AgentExecution
 from app.schemas.agent_schema import (
@@ -36,6 +38,42 @@ async def log_agent_activity(data: str):
 
     await asyncio.sleep(1)
     print(f"AUDIT LOG: {data}")
+
+
+_STATS_QUERY = """
+SELECT
+  (SELECT count(*) FROM checkpoints)                   AS checkpoints,
+  (SELECT count(*) FROM checkpoint_writes)             AS checkpoint_writes,
+  (SELECT count(*) FROM checkpoint_blobs)              AS checkpoint_blobs,
+  (SELECT count(DISTINCT thread_id) FROM checkpoints)  AS threads,
+  (SELECT min((checkpoint ->> 'ts')::timestamptz) FROM checkpoints)
+                                                       AS oldest_checkpoint
+"""
+
+
+@router.post("/admin/gc")
+async def run_gc(user: CurrentUser = Depends(get_current_user)):
+    """Trigger a checkpoint retention sweep now. Same logic as the hourly task."""
+    return await sweep(workflow.checkpointer, settings.checkpoint_retention_days)
+
+
+@router.get("/admin/gc/stats")
+async def gc_stats(user: CurrentUser = Depends(get_current_user)):
+    """Row counts per checkpoint table and the age of the oldest live thread."""
+    async with _conn(workflow.checkpointer) as conn:
+        cur = await conn.execute(_STATS_QUERY)
+        row = await cur.fetchone()
+    # dict_row (from_conn_string) vs tuple (pool) - key by name, fall back to index.
+    get = (lambda k, i: row[k]) if isinstance(row, dict) else (lambda k, i: row[i])
+    oldest = get("oldest_checkpoint", 4)
+    return {
+        "checkpoints": get("checkpoints", 0),
+        "checkpoint_writes": get("checkpoint_writes", 1),
+        "checkpoint_blobs": get("checkpoint_blobs", 2),
+        "threads": get("threads", 3),
+        "oldest_checkpoint": oldest.isoformat() if oldest else None,
+        "retention_days": settings.checkpoint_retention_days,
+    }
 
 
 @router.post("/run/stream")

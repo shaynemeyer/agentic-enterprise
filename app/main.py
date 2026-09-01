@@ -24,6 +24,7 @@ from app.core.context import (
 )
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.security import limiter
+from app.graph.gc import sweep
 from app.schemas.errors import ErrorResponse
 
 from .graph.engine import workflow
@@ -70,6 +71,35 @@ async def lifespan(app: FastAPI):
         saver = AsyncPostgresSaver(pool)
         await saver.setup()  # idempotent
         workflow.checkpointer = saver
+
+        async def _gc_loop():
+            interval = settings.checkpoint_gc_interval_hours * 3600
+            if interval <= 0:
+                logger.info("Checkpoint GC: scheduled sweep disabled")
+                return
+            # let startup settle; see it run without waiting hours
+            await asyncio.sleep(60)
+            while True:
+                try:
+                    await sweep(saver, settings.checkpoint_retention_days)
+                except Exception:  # a failed sweep must not kill the task
+                    logger.exception(
+                        "Checkpoint GC sweep failed; will retry next interval"
+                    )
+                await asyncio.sleep(interval)
+
+        gc_task = asyncio.create_task(_gc_loop())
+
+        @stack.callback  # runs on shutdown, in reverse order, like the pool close
+        def _cancel_gc():
+            gc_task.cancel()
+
+        logger.info(
+            "Checkpoint GC: every %dh, retention %dd",
+            settings.checkpoint_gc_interval_hours,
+            settings.checkpoint_retention_days,
+        )
+
         logger.info("Checkpointer: Postgres via %s", settings.checkpoint_db_url)
 
         try:
