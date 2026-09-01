@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     llm_api_key: str = "EMPTY"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 512
+
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5433/agent_db"
+    checkpoint_db_url: str = "postgresql://agent:agent@localhost:5433/agent_db"
 
     jwt_secret: str = "dev-only-change-me"  # override via JWT_SECRET in .env
     jwt_algorithm: str = "HS256"
