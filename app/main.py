@@ -1,14 +1,16 @@
 import asyncio
 import logging
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.errors import GraphRecursionError
+from psycopg_pool import AsyncConnectionPool
 from redis import asyncio as redis_asyncio
 from slowapi.errors import RateLimitExceeded
 
@@ -20,10 +22,6 @@ from app.core.context import (
     new_request_id,
     set_request_id,
 )
-
-from contextlib import AsyncExitStack
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
 from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.security import limiter
 from app.schemas.errors import ErrorResponse
@@ -49,7 +47,6 @@ for handler in logging.getLogger().handlers:
 logger = logging.getLogger("enterprise_agent")
 
 SMOKE_TEST_TIMEOUT_S = 60
-CHECKPOINT_DB = "var/checkpoints.db"
 
 
 @asynccontextmanager
@@ -58,13 +55,22 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Sovereign Agentic Core...")
 
     async with AsyncExitStack() as stack:
-        # Persistent checkpointer: opened here, closed on shutdown by the stack.
-        saver = await stack.enter_async_context(
-            AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB)
+        # Persistent checkpointer: a psycopg pool + AsyncPostgresSaver.
+        # The stack opens the pool here and closes it on shutdown.
+        pool = await stack.enter_async_context(
+            AsyncConnectionPool(
+                settings.checkpoint_db_url,
+                min_size=1,
+                max_size=10,
+                kwargs={"autocommit": True, "prepare_threshold": 0},
+                open=False,
+            )
         )
-        await saver.setup()  # idempotent - CREATE TABLE IF NOT EXISTS
+        await pool.open(wait=True)
+        saver = AsyncPostgresSaver(pool)
+        await saver.setup()  # idempotent
         workflow.checkpointer = saver
-        logger.info("Checkpointer: SQLite at %s", CHECKPOINT_DB)
+        logger.info("Checkpointer: Postgres via %s", settings.checkpoint_db_url)
 
         try:
             client = redis_asyncio.from_url(settings.redis_url)

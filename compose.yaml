@@ -17,6 +17,8 @@ services:
     environment:
       # In-network address. On the host, config defaults to localhost:6379.
       REDIS_URL: "redis://redis:6379/0"
+      CHECKPOINT_DB_URL: "postgresql://agent:agent@db:5432/agent_db"
+      DATABASE_URL: "postgresql+asyncpg://agent:agent@db:5432/agent_db"
 
   redis:
     image: redis:7.4-alpine
