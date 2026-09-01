@@ -12,7 +12,12 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 512
 
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5433/agent_db"
+
     checkpoint_db_url: str = "postgresql://agent:agent@localhost:5433/agent_db"
+    # Session GC: delete a thread when its newest checkpoint is older than this.
+    checkpoint_retention_days: int = 30
+    # How often the background sweep runs. Set 0 to disable the scheduled sweep
+    checkpoint_gc_interval_hours: int = 6
 
     jwt_secret: str = "dev-only-change-me"  # override via JWT_SECRET in .env
     jwt_algorithm: str = "HS256"
