@@ -12,3 +12,10 @@ class AgentExecution(Base, TimestampMixin):
     request_id: Mapped[uuid.UUID] = mapped_column(index=True)
     agent_id: Mapped[str] = mapped_column()
     status: Mapped[str] = mapped_column(default="pending")
+
+
+class ThreadOwnership(Base, TimestampMixin):
+    __tablename__ = "thread_ownership"
+
+    thread_id: Mapped[str] = mapped_column(primary_key=True)
+    owner_username: Mapped[str] = mapped_column(index=True)
