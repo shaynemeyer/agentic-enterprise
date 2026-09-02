@@ -13,7 +13,9 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 
 
-def checkpoint_config(thread_id: str, checkpoint_id: str | None = None) -> RunnableConfig:
+def checkpoint_config(
+    thread_id: str, checkpoint_id: str | None = None
+) -> RunnableConfig:
     """Config for a thread, optionally pinned to one checkpoint.
 
     With checkpoint_id, an invoke replays from that point and forks a new
@@ -62,3 +64,37 @@ async def is_interrupted(graph: CompiledStateGraph, thread_id: str) -> bool:
     """True if the thread's latest checkpoint has pending nodes to run."""
     snap = await graph.aget_state(checkpoint_config(thread_id))
     return bool(snap.next)
+
+
+async def edit_checkpoint(
+    graph: CompiledStateGraph,
+    thread_id: str,
+    checkpoint_id: str,
+    values: dict[str, Any],
+    as_node: str,
+) -> RunnableConfig:
+    """Write `values` onto the checkpoint as if node `as_node` had produced them.
+
+    Returns the config of the new checkpoint aupdate_state creates - pass this
+    straight to ainvoke(None, ...) to replay from the correction, or read it
+    with aget_state to confirm the edit before replaying.
+    """
+    return await graph.aupdate_state(
+        checkpoint_config(thread_id, checkpoint_id),
+        values,
+        as_node=as_node,
+    )
+
+
+def branch_tree(timeline: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Group a flat timeline by parent_checkpoint_id.
+
+    Keys are parent_checkpoint_id (None for the thread's root checkpoint);
+    values are that parent's direct children, in the order thread_timeline
+    returned them (newest first). A checkpoint with more than one child here
+    is a fork or edit point - the thread diverged there.
+    """
+    tree: dict[str, list[dict[str, Any]]] = {}
+    for entry in timeline:
+        tree.setdefault(entry["parent_checkpoint_id"], []).append(entry)
+    return tree

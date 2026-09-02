@@ -17,7 +17,9 @@ from app.database import get_db
 from app.graph.engine import workflow
 from app.graph.gc import _conn, sweep
 from app.graph.history import (
+    branch_tree,
     checkpoint_config,
+    edit_checkpoint,
     is_interrupted,
     thread_timeline,
 )
@@ -297,4 +299,60 @@ async def fork_thread(
         "forked_from": checkpoint_id,
         "new_checkpoint_id": forked.config["configurable"]["checkpoint_id"],
         "output": result["messages"][-1].content,
+    }
+
+
+@router.post("/admin/threads/{thread_id}/edit")
+async def edit_thread_checkpoint(
+    thread_id: str,
+    checkpoint_id: str,
+    as_node: str,
+    critique: str | None = None,
+    revision_count: int | None = None,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Overwrite state at a past checkpoint - the correction, not the replay.
+
+    Only critique/revision_count are exposed: they are the two overwrite
+    (no-reducer) fields the critic/general cycle uses to decide whether to
+    keep looping (Lab 24). messages and internal_logs use reducers that
+    append, not overwrite, so editing them here would not mean what a caller
+    expects - use fork (Lab 35) to add a message instead.
+    """
+    values = {
+        k: v
+        for k, v in {"critique": critique, "revision_count": revision_count}.items()
+        if v is not None
+    }
+    if not values:
+        raise HTTPException(
+            status_code=422, detail="Provide critique and/or revision_count."
+        )
+
+    new_config = await edit_checkpoint(
+        workflow, thread_id, checkpoint_id, values, as_node=as_node
+    )
+    return {
+        "thread_id": thread_id,
+        "edited_from": checkpoint_id,
+        "new_checkpoint_id": new_config["configurable"]["checkpoint_id"],
+        "values_written": values,
+    }
+
+
+@router.get("/admin/threads/{thread_id}/branches")
+async def thread_branches(
+    thread_id: str,
+    limit: int = 200,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Checkpoints grouped by parent - where a thread forked or was edited."""
+    timeline = await thread_timeline(workflow, thread_id, limit=limit)
+    tree = branch_tree(timeline)
+    fork_points = {p: len(c) for p, c in tree.items() if p is not None and len(c) > 1}
+    return {
+        "thread_id": thread_id,
+        "checkpoint_count": len(timeline),
+        "fork_points": fork_points,
+        "tree": tree,
     }
