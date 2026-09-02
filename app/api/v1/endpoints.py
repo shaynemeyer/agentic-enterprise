@@ -7,7 +7,12 @@ from langgraph.errors import GraphRecursionError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse
 
-from app.api.v1.auth import CurrentUser, get_current_user, user_key
+from app.api.v1.auth import (
+    CurrentUser,
+    get_current_user,
+    require_thread_owner,
+    user_key,
+)
 from app.core.config import settings
 from app.core.context import REQUEST_ID_HEADER, get_request_id
 from app.core.exceptions import AgenticException, MaxRecursionError
@@ -234,7 +239,7 @@ async def get_conversation(
 async def thread_history(
     thread_id: str,
     limit: int = 50,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_thread_owner),
 ):
     """Every checkpoint for a thread, newest first. Empty list if unknown."""
     timeline = await thread_timeline(workflow, thread_id, limit=limit)
@@ -249,7 +254,7 @@ async def thread_history(
 @router.post("/admin/threads/{thread_id}/resume", response_model=AgentResponse)
 async def resume_thread(
     thread_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_thread_owner),
 ):
     """Finish an interrupted run: execute the nodes that were still pending.
 
@@ -280,7 +285,8 @@ async def fork_thread(
     thread_id: str,
     checkpoint_id: str,
     message: str,
-    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_thread_owner),
 ):
     """Branch a thread: re-run from `checkpoint_id` with a new message.
 
@@ -309,7 +315,8 @@ async def edit_thread_checkpoint(
     as_node: str,
     critique: str | None = None,
     revision_count: int | None = None,
-    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_thread_owner),
 ):
     """Overwrite state at a past checkpoint - the correction, not the replay.
 
@@ -344,7 +351,7 @@ async def edit_thread_checkpoint(
 async def thread_branches(
     thread_id: str,
     limit: int = 200,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_thread_owner),
 ):
     """Checkpoints grouped by parent - where a thread forked or was edited."""
     timeline = await thread_timeline(workflow, thread_id, limit=limit)

@@ -1,9 +1,10 @@
 """OAuth2 password-flow login and the `get_current_user` dependency."""
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import (
@@ -12,6 +13,8 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.database import get_db
+from app.graph.ownership import claim_or_check
 
 router = APIRouter(tags=["Auth"])
 
@@ -91,3 +94,17 @@ def user_key(request: Request) -> str:
         except jwt.InvalidTokenError:
             pass
     return request.client.host if request.client else "anonymous"
+
+
+async def require_thread_owner(
+    thread_id: str = Path(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CurrentUser:
+    """403 unless `user` owns `thread_id` or is admin. Claims an unowned thread."""
+    if not await claim_or_check(db, thread_id, user.username):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not the owner of this thread_id.",
+        )
+    return user
