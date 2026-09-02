@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi_cache.decorator import cache
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
@@ -16,6 +16,11 @@ from app.core.security import limiter
 from app.database import get_db
 from app.graph.engine import workflow
 from app.graph.gc import _conn, sweep
+from app.graph.history import (
+    checkpoint_config,
+    is_interrupted,
+    thread_timeline,
+)
 from app.graph.tools import tools
 from app.models import AgentExecution
 from app.schemas.agent_schema import (
@@ -221,3 +226,75 @@ async def get_conversation(
     messages: list[BaseMessage] = snapshot.values.get("messages", [])
     turns = [HistoryTurn(role=m.type, content=str(m.content)) for m in messages]
     return ConversationHistory(conversation_id=conversation_id, turns=turns)
+
+
+@router.get("/admin/threads/{thread_id}/history")
+async def thread_history(
+    thread_id: str,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Every checkpoint for a thread, newest first. Empty list if unknown."""
+    timeline = await thread_timeline(workflow, thread_id, limit=limit)
+    return {
+        "thread_id": thread_id,
+        "interrupted": await is_interrupted(workflow, thread_id),
+        "checkpoint_count": len(timeline),
+        "checkpoints": timeline,
+    }
+
+
+@router.post("/admin/threads/{thread_id}/resume", response_model=AgentResponse)
+async def resume_thread(
+    thread_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Finish an interrupted run: execute the nodes that were still pending.
+
+    Invokes with None as input, so LangGraph continues from the last checkpoint
+    instead of starting the graph over.
+    """
+    if not await is_interrupted(workflow, thread_id):
+        raise HTTPException(
+            status_code=404,
+            detail="No interrupted run for this thread_id (nothing pending).",
+        )
+
+    request_llm = get_sovereign_llm().bind_tools(tools)
+    result = await workflow.ainvoke(
+        None,  # resume, do not append
+        context={"llm": request_llm},
+        config=checkpoint_config(thread_id),
+    )
+    return AgentResponse(
+        request_id=user.username,  # no request_id on a resume; use the caller
+        output=result["messages"][-1].content,
+        status="success",
+    )
+
+
+@router.post("/admin/threads/{thread_id}/fork")
+async def fork_thread(
+    thread_id: str,
+    checkpoint_id: str,
+    message: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Branch a thread: re-run from `checkpoint_id` with a new message.
+
+    Does not modify the original chain - the fork is a sibling branch sharing
+    history up to checkpoint_id.
+    """
+    request_llm = get_sovereign_llm().bind_tools(tools)
+    result = await workflow.ainvoke(
+        {"messages": [HumanMessage(message)]},
+        context={"llm": request_llm},
+        config=checkpoint_config(thread_id, checkpoint_id),
+    )
+    forked = await workflow.aget_state(checkpoint_config(thread_id))
+    return {
+        "thread_id": thread_id,
+        "forked_from": checkpoint_id,
+        "new_checkpoint_id": forked.config["configurable"]["checkpoint_id"],
+        "output": result["messages"][-1].content,
+    }
