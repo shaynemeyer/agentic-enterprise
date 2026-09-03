@@ -46,7 +46,7 @@ retrieval.**
 - A constrained dev/CI environment where a 958MB pull is meaningfully
   better than a 4.7GB one — laptops, CI runners, anywhere disk or
   first-pull time is a real cost.
-- Lab 38's case exactly: `remember()` embeds one short fact per call, and
+- `remember()` embeds one short fact per call, and
   the store is meant to grow without becoming its own capacity problem.
 
 **`qwen3-embedding:8b` — long-document or multilingual-quality retrieval.**
@@ -127,9 +127,9 @@ to choose among the models that already clear those bars.
 ## 4. Where This Applies in This Repo
 
 `app/core/config.py`'s `embedding_base_url` / `embedding_model` /
-`embedding_api_key` (Lab 38) make the model a config value, not a hardcoded
+`embedding_api_key` make the model a config value, not a hardcoded
 import — switching from `nomic-embed-text-v2-moe` to `qwen3-embedding:8b`
 later is a `.env` change plus dropping and recreating the Qdrant collection
-at the new width (see Lab 38's Safety Net / Rollback), not a code change.
+at the new width, not a code change.
 If the memory store's use case shifts from short facts to long documents,
 that's the trigger to revisit this choice — not a leaderboard update.
