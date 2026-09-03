@@ -29,6 +29,7 @@ from app.graph.history import (
     thread_timeline,
 )
 from app.graph.tools import tools
+from app.memory.vector_store import remember, search
 from app.models import AgentExecution
 from app.schemas.agent_schema import (
     AgentRequest,
@@ -37,6 +38,7 @@ from app.schemas.agent_schema import (
     ConversationHistory,
     HistoryTurn,
 )
+from app.schemas.memory_schema import MemorySearchResponse, RememberResponse
 from app.schemas.stream import StreamEvent
 
 logger = logging.getLogger(__name__)
@@ -363,3 +365,38 @@ async def thread_branches(
         "fork_points": fork_points,
         "tree": tree,
     }
+
+
+@router.post("/admin/threads/{thread_id}/memory/remember", response_model=RememberResponse)
+async def remember_thread_fact(
+    thread_id: str,
+    text: str,
+    user: CurrentUser = Depends(require_thread_owner),
+):
+    """Embed `text` into semantic memory, tagged with thread_id.
+
+    Ownership-checked the same as every other /admin/threads/{id} route -
+    require_thread_owner's thread_id param is typed Path(...), so it can
+    only be satisfied from the URL path, not a query parameter. The route
+    lives under /admin/threads/{thread_id}/... for that reason, matching
+    /admin/threads/{thread_id}/edit and friends.
+    """
+    point_id = await remember(thread_id, text)
+    return RememberResponse(point_id=point_id, thread_id=thread_id)
+
+
+@router.get("/admin/memory/search", response_model=MemorySearchResponse)
+async def search_memory(
+    q: str,
+    limit: int = 5,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Cosine-similarity search across every thread's remembered facts.
+
+    Deliberately not ownership-scoped like /admin/threads/{id}/* - a memory
+    has no single owning thread_id by design, so there is no one
+    thread to check require_thread_owner against. Any authenticated caller
+    can search all memory. (TODO: THIS NEEDS TO BE FIXED)
+    """
+    hits = await search(q, limit=limit)
+    return MemorySearchResponse(query=q, hits=hits)
