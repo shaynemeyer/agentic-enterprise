@@ -280,11 +280,11 @@ async def critic(state: GraphState) -> dict:
     }
 
 
-def pick_route(state: GraphState) -> Literal["agent", "billing", "general"]:
+def pick_route(state: GraphState) -> Literal["memory_retriever", "billing", "general"]:
     """Read the router's decision and name the next node."""
     decision = state.get("route_to", "general")
     if decision == "technical":
-        return "agent"
+        return "memory_retriever"
     if decision == "billing":
         return "billing"
     return "general"
