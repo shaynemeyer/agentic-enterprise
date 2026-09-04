@@ -28,6 +28,7 @@ from app.graph.history import (
     is_interrupted,
     thread_timeline,
 )
+from app.graph.ownership import is_admin, owned_thread_ids
 from app.graph.tools import tools
 from app.memory.vector_store import remember, search
 from app.models import AgentExecution
@@ -170,7 +171,7 @@ async def run_agent(
         # The engine works while the CPU handles other requests
         result = await workflow.ainvoke(
             initial_state,
-            context={"llm": request_llm},
+            context={"llm": request_llm, "db": db, "username": user.username},
             config={"configurable": {"thread_id": thread_id}},
         )
 
@@ -367,7 +368,9 @@ async def thread_branches(
     }
 
 
-@router.post("/admin/threads/{thread_id}/memory/remember", response_model=RememberResponse)
+@router.post(
+    "/admin/threads/{thread_id}/memory/remember", response_model=RememberResponse
+)
 async def remember_thread_fact(
     thread_id: str,
     text: str,
@@ -375,11 +378,7 @@ async def remember_thread_fact(
 ):
     """Embed `text` into semantic memory, tagged with thread_id.
 
-    Ownership-checked the same as every other /admin/threads/{id} route -
-    require_thread_owner's thread_id param is typed Path(...), so it can
-    only be satisfied from the URL path, not a query parameter. The route
-    lives under /admin/threads/{thread_id}/... for that reason, matching
-    /admin/threads/{thread_id}/edit and friends.
+    Ownership-checked the same as every other /admin/threads/{id} route - require_thread_owner's thread_id param is typed Path(...), so it can only be satisfied from the URL path, not a query parameter. The route lives under /admin/threads/{thread_id}/... for that reason, matching /admin/threads/{thread_id}/edit and friends.
     """
     point_id = await remember(thread_id, text)
     return RememberResponse(point_id=point_id, thread_id=thread_id)
@@ -390,13 +389,16 @@ async def search_memory(
     q: str,
     limit: int = 5,
     user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Cosine-similarity search across every thread's remembered facts.
+    """Cosine-similarity search across every thread's remembered facts the caller owns (or every thread, for the admin account).
 
-    Deliberately not ownership-scoped like /admin/threads/{id}/* - a memory
-    has no single owning thread_id by design, so there is no one
-    thread to check require_thread_owner against. Any authenticated caller
-    can search all memory. (TODO: THIS NEEDS TO BE FIXED)
+    Ownership-scoped as of this lab - previously we left this route unfiltered because search() had no thread_ids param yet and there was no reason to add one until the graph's own retrieval needed it. Same owned_thread_ids() and is_admin() used by retrieve_semantic_memories, so the route and the graph node enforce one rule, not two that could drift apart.
     """
-    hits = await search(q, limit=limit)
+    if is_admin(user.username):
+        hits = await search(q, limit=limit)
+    else:
+        allowed = await owned_thread_ids(db, user.username)
+        hits = await search(q, limit=limit, thread_ids=allowed)
+
     return MemorySearchResponse(query=q, hits=hits)

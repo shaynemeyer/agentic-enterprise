@@ -99,9 +99,19 @@ async def remember(
     return point_id
 
 
-async def search(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Top `limit` memories by cosine similarity to `query`. [] if the
-    collection does not exist yet (nothing has been remembered)."""
+async def search(
+    query: str, limit: int = 5, thread_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Top `limit` memories by cosine similarity to `query`.
+
+    thread_ids, when given, restricts results to memories whose payload
+    thread_id is in that list - a Qdrant Filter, not a post-hoc Python
+    filter, so a caller with 0 owned threads gets a correctly-empty result
+    without first fetching (and discarding) someone else's memories.
+    None (the default) searches unfiltered, matching Lab 38's original
+    behavior - existing callers of search() are unaffected.
+    [] if the collection does not exist yet (nothing has been remembered).
+    """
     embeddings = get_embeddings()
     vector = await embeddings.aembed_query(query)
 
@@ -110,8 +120,23 @@ async def search(query: str, limit: int = 5) -> list[dict[str, Any]]:
     if not any(c.name == settings.qdrant_collection for c in existing.collections):
         return []
 
+    query_filter = None
+    if thread_ids is not None:
+        if not thread_ids:
+            return []
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="thread_id", match=models.MatchAny(any=thread_ids)
+                )
+            ]
+        )
+
     hits = await client.query_points(
-        collection_name=settings.qdrant_collection, query=vector, limit=limit
+        collection_name=settings.qdrant_collection,
+        query=vector,
+        limit=limit,
+        query_filter=query_filter,
     )
     return [
         {
