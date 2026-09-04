@@ -22,19 +22,24 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token")
 
 
 def _seed_users() -> dict[str, dict[str, str]]:
-    """Demo user store, built from DEMO_PASSWORD in .env. Empty if unset.
+    """Demo user store, built from DEMO_PASSWORD/DEMO2_PASSWORD in .env.
 
-    A real store is a SQLAlchemy model with TimestampMixin (see CLAUDE.md),
-    queried through the request's db session.
+    Each user is seeded only if its password is set; either or both may be
+    empty. A real store is a SQLAlchemy model with TimestampMixin (see
+    CLAUDE.md), queried through the request's db session.
     """
-    if not settings.demo_password:
-        return {}
-    return {
-        settings.demo_username: {
+    users: dict[str, dict[str, str]] = {}
+    if settings.demo_password:
+        users[settings.demo_username] = {
             "username": settings.demo_username,
             "hashed_password": hash_password(settings.demo_password),
         }
-    }
+    if settings.demo2_password:
+        users[settings.demo2_username] = {
+            "username": settings.demo2_username,
+            "hashed_password": hash_password(settings.demo2_password),
+        }
+    return users
 
 
 _USERS = _seed_users()
