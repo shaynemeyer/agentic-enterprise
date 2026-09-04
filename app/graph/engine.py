@@ -3,17 +3,21 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.config import get_stream_writer
+from langgraph.config import get_config, get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.runtime import Runtime
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
 from app.graph.tools import tools
+
+from app.graph.ownership import is_admin, owned_thread_ids
+from app.memory.vector_store import search
 
 
 def merge_logs(existing: list[str] | None, update: list[str]) -> list[str]:
@@ -45,6 +49,9 @@ class GraphState(TypedDict):
     # No reducer -> overwrite. The critic's note back to the worker; "" on the
     # first pass, "PASS" once the draft clears the bar.
     critique: str
+    # No reducer -> overwrite, same convention as route_to/critique above:
+    # each run's retrieval replaces the last, it does not accumulate.
+    retrieved_context: list[str]
 
 
 class GraphOutput(TypedDict):
@@ -64,6 +71,8 @@ class RuntimeContext:
     """
 
     llm: BaseChatModel
+    db: AsyncSession
+    username: str
 
 
 async def call_model(state: GraphState, runtime: Runtime[RuntimeContext]) -> dict:
@@ -75,7 +84,20 @@ async def call_model(state: GraphState, runtime: Runtime[RuntimeContext]) -> dic
     writer({"status": "invoking model"})
 
     llm = runtime.context.llm
-    response = await llm.ainvoke(state["messages"])
+    messages = state["messages"]
+
+    if state.get("retrieved_context"):
+        context_block = "\n".join(f"- {fact}" for fact in state["retrieved_context"])
+        system_prompt = SystemMessage(
+            content=(
+                "The following are past facts recorded in other conversations, "
+                "not part of the current exchange. Use them only if relevant:\n"
+                f"{context_block}"
+            )
+        )
+        messages = [system_prompt, *messages]
+
+    response = await llm.ainvoke(messages)
 
     writer({"status": "model responded"})
 
@@ -110,6 +132,67 @@ async def route_request(state: GraphState) -> dict:
         "route_to": decision,
         "status": "routed",
         "internal_logs": [f"router: classified as {decision}"],
+    }
+
+
+# Neither Ollama nor vLLM exposes a client-side tokenizer the way tiktoken
+# does for OpenAI - Previously we hit the same gap for embeddings
+# (check_embedding_ctx_length=False) and took the same
+# position there: don't guess at a model-specific tokenizer, use the
+# server's own accounting. ~4 chars/token is a widely-cited rule of thumb
+# for English text (OpenAI's own tokenizer help page states it:
+# https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them)
+# and is model-agnostic enough to serve as a deliberately conservative
+# budget - not a real count, and not claimed to be one (Roadmap).
+CHARS_PER_TOKEN_ESTIMATE = 4
+MAX_CONTEXT_TOKENS = 500
+MAX_CONTEXT_CHARS = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN_ESTIMATE
+
+
+async def retrieve_semantic_memories(
+    state: GraphState, runtime: Runtime[RuntimeContext]
+) -> dict:
+    """Query the cross-thread vector store with the latest user turn,
+    restricted to threads the calling user actually owns.
+
+    Runs only when pick_route has already classified this turn as needing
+    it - not on every message, unlike the source material's
+    unconditional node. thread_id (for logging only, not the filter) comes
+    from the run's own config, the same mechanism get_request_id() and
+    get_stream_writer() already use for per-run values GraphState doesn't
+    carry.
+    """
+    logger = logging.getLogger("enterprise_agent.graph")
+    thread_id = get_config().get("configurable", {}).get("thread_id", "")
+    query = state["messages"][-1].content
+
+    username = runtime.context.username
+    if is_admin(username):
+        hits = await search(query, limit=2)
+    else:
+        allowed = await owned_thread_ids(runtime.context.db, username)
+        hits = await search(query, limit=2, thread_ids=allowed)
+
+    logger.info(
+        "node=memory_retriever request_id=%s thread_id=%s user=%s hits=%d",
+        get_request_id() or "-",
+        thread_id,
+        username,
+        len(hits),
+    )
+
+    context: list[str] = []
+    budget = MAX_CONTEXT_CHARS
+    for hit in hits:
+        text = hit["text"]
+        if len(text) > budget:
+            break
+        context.append(text)
+        budget -= len(text)
+
+    return {
+        "retrieved_context": context,
+        "internal_logs": ["memory_retriever: fetched cross-thread context"],
     }
 
 
@@ -197,11 +280,11 @@ async def critic(state: GraphState) -> dict:
     }
 
 
-def pick_route(state: GraphState) -> Literal["agent", "billing", "general"]:
+def pick_route(state: GraphState) -> Literal["memory_retriever", "billing", "general"]:
     """Read the router's decision and name the next node."""
     decision = state.get("route_to", "general")
     if decision == "technical":
-        return "agent"
+        return "memory_retriever"
     if decision == "billing":
         return "billing"
     return "general"
@@ -229,7 +312,13 @@ graph_builder.add_node("general", general_worker)
 graph_builder.add_node("critic", critic)
 
 graph_builder.add_edge(START, "router")
+graph_builder.add_node("memory_retriever", retrieve_semantic_memories)
+
 graph_builder.add_conditional_edges("router", pick_route)
+# pick_route's "technical" branch now points at memory_retriever instead
+# of directly at "agent" - update the branch mapping pick_route returns,
+# then:
+graph_builder.add_edge("memory_retriever", "agent")
 
 graph_builder.add_conditional_edges("agent", tools_condition)
 graph_builder.add_edge("tools", "agent")

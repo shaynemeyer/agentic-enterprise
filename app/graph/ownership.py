@@ -51,3 +51,15 @@ async def claim_or_check(db: AsyncSession, thread_id: str, username: str) -> boo
         )
     )
     return owner == username
+
+
+async def owned_thread_ids(db: AsyncSession, username: str) -> list[str]:
+    """Every thread_id `username` owns. Empty for a user who has never
+    touched an /admin/threads/{id} route - ownership rows are claimed
+    lazily (module docstring), not pre-provisioned."""
+    rows = await db.scalars(
+        select(ThreadOwnership.thread_id).where(
+            ThreadOwnership.owner_username == username
+        )
+    )
+    return list(rows)
