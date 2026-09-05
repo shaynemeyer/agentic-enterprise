@@ -24,12 +24,12 @@ async def test_second_call_on_same_thread_sees_prior_messages():
     # fake reply. "status" keyword on turn two keeps it on that path.
     await workflow.ainvoke(
         {"messages": [HumanMessage("the deploy logs show an error")]},
-        context={"llm": _fake("restarted it")},
+        context={"llm": _fake("restarted it"), "username": "admin"},
         config=cfg,
     )
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("what is the status now?")]},
-        context={"llm": _fake("all green")},
+        context={"llm": _fake("all green"), "username": "admin"},
         config=cfg,
     )
 
@@ -44,12 +44,12 @@ async def test_second_call_on_same_thread_sees_prior_messages():
 async def test_a_different_thread_id_is_isolated():
     await workflow.ainvoke(
         {"messages": [HumanMessage("the deploy logs show an error")]},
-        context={"llm": _fake("restarted it")},
+        context={"llm": _fake("restarted it"), "username": "admin"},
         config={"configurable": {"thread_id": "conv-a"}},
     )
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("my invoice is wrong")]},
-        context={"llm": _fake()},
+        context={"llm": _fake("billing department: on it"), "username": "admin"},
         config={"configurable": {"thread_id": "conv-b"}},
     )
 
@@ -64,7 +64,7 @@ async def test_missing_thread_id_is_rejected():
     with pytest.raises(ValueError, match="thread_id"):
         await workflow.ainvoke(
             {"messages": [HumanMessage("hello")]},
-            context={"llm": _fake("hi")},
+            context={"llm": _fake("hi"), "username": "admin"},
         )
 
 
@@ -75,7 +75,7 @@ async def test_state_snapshot_carries_the_routing_scratchpad():
     cfg = {"configurable": {"thread_id": "conv-snap"}}
     await workflow.ainvoke(
         {"messages": [HumanMessage("my invoice has a wrong charge")]},
-        context={"llm": _fake()},
+        context={"llm": _fake("billing department: on it"), "username": "admin"},
         config=cfg,
     )
 

@@ -14,9 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
-from app.graph.tools import tools
-
 from app.graph.ownership import is_admin, owned_thread_ids
+from app.graph.tools import tools
 from app.memory.vector_store import search
 
 
@@ -68,11 +67,21 @@ class RuntimeContext:
     Not part of state - the caller supplies this at invoke time, nodes only
     read it. Lets one compiled graph serve different LLM backends, DB sessions,
     or a no-network test double without touching module globals.
+
+    Two LLM handles because the caller can't know in advance which worker
+    route_request will pick: `tool_llm` (bound to `tools`) is only for
+    `call_model`'s technical path, which has the tool-execution loop to
+    handle a tool call. `llm` stays a plain, unbound model - billing_worker
+    and general_worker have no such loop, so a tool-bound model handed to
+    them can return an empty `.content` with the real answer sitting in an
+    unhandled `.tool_calls` instead (e.g. the model reaching for an
+    unrelated deployment-status tool on a billing question).
     """
 
     llm: BaseChatModel
-    db: AsyncSession
-    username: str
+    tool_llm: BaseChatModel | None = None
+    db: AsyncSession | None = None
+    username: str = ""
 
 
 async def call_model(state: GraphState, runtime: Runtime[RuntimeContext]) -> dict:
@@ -83,7 +92,7 @@ async def call_model(state: GraphState, runtime: Runtime[RuntimeContext]) -> dic
     writer = get_stream_writer()
     writer({"status": "invoking model"})
 
-    llm = runtime.context.llm
+    llm = runtime.context.tool_llm or runtime.context.llm
     messages = state["messages"]
 
     if state.get("retrieved_context"):
@@ -155,12 +164,12 @@ async def retrieve_semantic_memories(
     """Query the cross-thread vector store with the latest user turn,
     restricted to threads the calling user actually owns.
 
-    Runs only when pick_route has already classified this turn as needing
-    it - not on every message, unlike the source material's
-    unconditional node. thread_id (for logging only, not the filter) comes
-    from the run's own config, the same mechanism get_request_id() and
-    get_stream_writer() already use for per-run values GraphState doesn't
-    carry.
+    Sits ahead of every route_request outcome (technical, billing,
+    general), exactly once per user turn - after_memory_retriever reads
+    route_to to send control on to the right worker afterwards.
+    thread_id (for logging only, not the filter) comes from the run's own
+    config, the same mechanism get_request_id() and get_stream_writer()
+    already use for per-run values GraphState doesn't carry.
     """
     logger = logging.getLogger("enterprise_agent.graph")
     thread_id = get_config().get("configurable", {}).get("thread_id", "")
@@ -196,45 +205,55 @@ async def retrieve_semantic_memories(
     }
 
 
-async def billing_worker(state: GraphState) -> dict:
-    """Terminal node for billing requests. Stubbed."""
-    reply = AIMessage("This is the billing department. A stub - no records wired yet.")
+async def billing_worker(state: GraphState, runtime: Runtime[RuntimeContext]) -> dict:
+    """Answer a billing enquiry, using retrieved cross-thread context if any."""
+    messages = state["messages"]
+
+    if state.get("retrieved_context"):
+        context_block = "\n".join(f"- {fact}" for fact in state["retrieved_context"])
+        messages = [
+            SystemMessage(
+                content=(
+                    "The following are past facts recorded in other conversations, "
+                    "not part of the current exchange. Use them only if relevant:\n"
+                    f"{context_block}"
+                )
+            ),
+            *messages,
+        ]
+
+    response = await runtime.context.llm.ainvoke(messages)
+
     return {
-        "messages": [reply],
+        "messages": [response],
         "status": "completed",
-        "internal_logs": ["billing: stub reply"],
+        "internal_logs": ["billing: model call complete"],
     }
 
 
-async def general_worker(state: GraphState) -> dict:
+async def general_worker(state: GraphState, runtime: Runtime[RuntimeContext]) -> dict:
     """Draft a general-enquiries answer. Re-entered by the critic loop."""
-    logger = logging.getLogger("enterprise_agent.graph")
-
     count = state.get("revision_count", 0)
     note = state.get("critique", "")
 
-    # Stub answer. A real worker would call a retrieval step here; the point of
-    # this is the loop, not the content. The draft "improves" only in that
-    # it acknowledges the critic's note on a re-run.
+    context_lines = []
+    if state.get("retrieved_context"):
+        context_lines.append("Relevant past facts from other conversations:")
+        context_lines.extend(f"- {fact}" for fact in state["retrieved_context"])
     if note and note != "PASS":
-        reply = AIMessage(f"General enquiries desk (revised). Addressing: {note}")
-    else:
-        reply = AIMessage(
-            "General enquiries desk. A stub - no knowledge base wired yet."
-        )
+        context_lines.append(f"Address this feedback on your last draft: {note}")
 
-    logger.info(
-        "node=general request_id=%s attempt=%d", get_request_id() or "-", count + 1
-    )
+    messages = state["messages"]
+    if context_lines:
+        messages = [SystemMessage(content="\n".join(context_lines)), *messages]
 
-    writer = get_stream_writer()
-    writer({"status": f"general draft attempt {count + 1}"})
+    response = await runtime.context.llm.ainvoke(messages)
 
     return {
-        "messages": [reply],
-        "status": "drafted",
+        "messages": [response],
+        "status": "completed",
+        "internal_logs": [f"general: model call complete (attempt {count + 1})"],
         "revision_count": count + 1,
-        "internal_logs": [f"general: draft attempt {count + 1}"],
     }
 
 
@@ -280,11 +299,11 @@ async def critic(state: GraphState) -> dict:
     }
 
 
-def pick_route(state: GraphState) -> Literal["memory_retriever", "billing", "general"]:
-    """Read the router's decision and name the next node."""
-    decision = state.get("route_to", "general")
+def after_memory_retriever(state: GraphState) -> Literal["agent", "general", "billing"]:
+    """Resume at whichever worker route_request originally chose."""
+    decision = state.get("route_to")
     if decision == "technical":
-        return "memory_retriever"
+        return "agent"
     if decision == "billing":
         return "billing"
     return "general"
@@ -314,11 +333,12 @@ graph_builder.add_node("critic", critic)
 graph_builder.add_edge(START, "router")
 graph_builder.add_node("memory_retriever", retrieve_semantic_memories)
 
-graph_builder.add_conditional_edges("router", pick_route)
-# pick_route's "technical" branch now points at memory_retriever instead
-# of directly at "agent" - update the branch mapping pick_route returns,
-# then:
-graph_builder.add_edge("memory_retriever", "agent")
+# Every route_request outcome passes through memory_retriever now
+# (Lab 39 Step 6 / Lab 40 Steps 2-3) - one retrieval node serving all
+# three destinations, dispatched back out to the right worker by
+# after_memory_retriever reading route_to:
+graph_builder.add_edge("router", "memory_retriever")
+graph_builder.add_conditional_edges("memory_retriever", after_memory_retriever)
 
 graph_builder.add_conditional_edges("agent", tools_condition)
 graph_builder.add_edge("tools", "agent")
@@ -356,14 +376,18 @@ if __name__ == "__main__":
     ]
 
     async def _main() -> None:
-        demo_llm = get_sovereign_llm().bind_tools(tools)
+        demo_llm = get_sovereign_llm()
         for p in prompts:
             print(f"\n=== {p} ===")
             state = {"messages": [HumanMessage(p)], "status": "starting"}
             async for step in workflow.astream(
                 state,
                 stream_mode="values",
-                context={"llm": demo_llm},
+                context={
+                    "llm": demo_llm,
+                    "tool_llm": demo_llm.bind_tools(tools),
+                    "username": "admin",
+                },
                 output_keys=list(GraphState.__annotations__),
             ):
                 step["messages"][-1].pretty_print()

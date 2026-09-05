@@ -23,8 +23,10 @@ from app.core.context import (
     set_request_id,
 )
 from app.core.exceptions import AgenticException, MaxRecursionError
+from app.core.llm import get_sovereign_llm
 from app.core.security import limiter
 from app.graph.gc import sweep
+from app.graph.tools import tools
 from app.schemas.errors import ErrorResponse
 
 from .graph.engine import workflow
@@ -204,9 +206,15 @@ async def run_smoke_test(request: SmokeTestRequest):
 
         # Invoking the LangGraph workflow
         initial_state = {"messages": [("user", request.payload)]}
+        smoke_llm = get_sovereign_llm()
         result = await asyncio.wait_for(
             workflow.ainvoke(
                 initial_state,
+                context={
+                    "llm": smoke_llm,
+                    "tool_llm": smoke_llm.bind_tools(tools),
+                    "username": settings.demo_username,
+                },
                 config={"configurable": {"thread_id": f"smoke:{request.test_id}"}},
             ),
             timeout=SMOKE_TEST_TIMEOUT_S,

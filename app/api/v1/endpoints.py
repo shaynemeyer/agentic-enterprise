@@ -113,12 +113,18 @@ async def run_agent_stream(
     async def events():
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
         try:
-            request_llm = get_sovereign_llm().bind_tools(tools)
+            request_llm = get_sovereign_llm()
+            tool_llm = request_llm.bind_tools(tools)
 
             async for mode, chunk in workflow.astream(
                 initial_state,
                 stream_mode=["updates", "custom"],
-                context={"llm": request_llm},
+                context={
+                    "llm": request_llm,
+                    "tool_llm": tool_llm,
+                    "db": db,
+                    "username": user.username,
+                },
                 config={"configurable": {"thread_id": thread_id}},
             ):
                 if mode == "custom":
@@ -166,12 +172,18 @@ async def run_agent(
         # Crucial: Use ainvoke for non-blocking execution
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
 
-        request_llm = get_sovereign_llm().bind_tools(tools)
+        request_llm = get_sovereign_llm()
+        tool_llm = request_llm.bind_tools(tools)
 
         # The engine works while the CPU handles other requests
         result = await workflow.ainvoke(
             initial_state,
-            context={"llm": request_llm, "db": db, "username": user.username},
+            context={
+                "llm": request_llm,
+                "tool_llm": tool_llm,
+                "db": db,
+                "username": user.username,
+            },
             config={"configurable": {"thread_id": thread_id}},
         )
 
@@ -193,12 +205,26 @@ async def run_agent(
     # framework default; the `get_db` dependency still rolls back the session.
 
 
+def _ask_cache_key(func, namespace: str = "", *, request, response, args, kwargs) -> str:
+    """Key on `q` and the caller's username only.
+
+    fastapi-cache2's default key builder hashes every arg/kwarg, including
+    FastAPI-injected ones - `db` is a fresh AsyncSession per request (Lab 40
+    added it so `memory_retriever` can filter by ownership), so its identity
+    would change on every call and turn every cache hit into a miss.
+    """
+    q = kwargs.get("q", "")
+    username = kwargs["user"].username
+    return f"{namespace}:ask:{username}:{q}"
+
+
 @router.get("/ask", response_model=AskResponse)
 @limiter.limit("5/minute", key_func=user_key)
-@cache(expire=300)
+@cache(expire=300, key_builder=_ask_cache_key)
 async def ask(
     request: Request,
     q: str,
+    db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Read-shaped agent query. Identical `q` within 5 minutes is served from Redis.
@@ -208,13 +234,19 @@ async def ask(
     """
     initial_state = {"messages": [HumanMessage(q)]}
 
-    request_llm = get_sovereign_llm().bind_tools(tools)
+    request_llm = get_sovereign_llm()
+    tool_llm = request_llm.bind_tools(tools)
 
     # No request_id on this route - key the thread per user so a user's /ask
     # calls share one conversation. (Cache hits skip the graph entirely.)
     result = await workflow.ainvoke(
         initial_state,
-        context={"llm": request_llm},
+        context={
+            "llm": request_llm,
+            "tool_llm": tool_llm,
+            "db": db,
+            "username": user.username,
+        },
         config={"configurable": {"thread_id": f"ask:{user.username}"}},
     )
     return AskResponse(query=q, output=result["messages"][-1].content)
@@ -257,6 +289,7 @@ async def thread_history(
 @router.post("/admin/threads/{thread_id}/resume", response_model=AgentResponse)
 async def resume_thread(
     thread_id: str,
+    db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(require_thread_owner),
 ):
     """Finish an interrupted run: execute the nodes that were still pending.
@@ -270,10 +303,16 @@ async def resume_thread(
             detail="No interrupted run for this thread_id (nothing pending).",
         )
 
-    request_llm = get_sovereign_llm().bind_tools(tools)
+    request_llm = get_sovereign_llm()
+    tool_llm = request_llm.bind_tools(tools)
     result = await workflow.ainvoke(
         None,  # resume, do not append
-        context={"llm": request_llm},
+        context={
+            "llm": request_llm,
+            "tool_llm": tool_llm,
+            "db": db,
+            "username": user.username,
+        },
         config=checkpoint_config(thread_id),
     )
     return AgentResponse(
@@ -296,10 +335,16 @@ async def fork_thread(
     Does not modify the original chain - the fork is a sibling branch sharing
     history up to checkpoint_id.
     """
-    request_llm = get_sovereign_llm().bind_tools(tools)
+    request_llm = get_sovereign_llm()
+    tool_llm = request_llm.bind_tools(tools)
     result = await workflow.ainvoke(
         {"messages": [HumanMessage(message)]},
-        context={"llm": request_llm},
+        context={
+            "llm": request_llm,
+            "tool_llm": tool_llm,
+            "db": db,
+            "username": user.username,
+        },
         config=checkpoint_config(thread_id, checkpoint_id),
     )
     forked = await workflow.aget_state(checkpoint_config(thread_id))

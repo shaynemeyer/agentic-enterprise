@@ -38,7 +38,7 @@ async def test_completed_thread_has_history_and_is_not_interrupted():
         graph = graph_builder.compile(checkpointer=saver)
         await graph.ainvoke(
             {"messages": [HumanMessage("hello")]},
-            context={"llm": _fake("hi there")},
+            context={"llm": _fake("hi there"), "username": "admin"},
             config=cfg,
         )
 
@@ -67,7 +67,7 @@ async def test_edit_writes_a_new_checkpoint_without_touching_the_original():
         graph = graph_builder.compile(checkpointer=saver)
         await graph.ainvoke(
             {"messages": [HumanMessage("hello")]},
-            context={"llm": _fake("hi there")},
+            context={"llm": _fake("hi there"), "username": "admin"},
             config=cfg,
         )
 
@@ -105,7 +105,7 @@ async def test_branch_tree_groups_fork_children_under_their_parent():
         graph = graph_builder.compile(checkpointer=saver)
         await graph.ainvoke(
             {"messages": [HumanMessage("hello")]},
-            context={"llm": _fake("hi there")},
+            context={"llm": _fake("hi there"), "username": "admin"},
             config=cfg,
         )
 
