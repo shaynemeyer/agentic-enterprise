@@ -13,7 +13,7 @@ async def test_call_model_uses_injected_llm():
     # "status" is a router keyword -> routes to `agent` -> call_model runs.
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("check the deploy status of agent-api")]},
-        context={"llm": fake},
+        context={"llm": fake, "username": "admin"},
         config={"configurable": {"thread_id": "di-test"}},
     )
 

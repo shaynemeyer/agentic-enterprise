@@ -11,6 +11,7 @@ graph TD;
 	billing(billing)
 	general(general)
 	critic(critic)
+	memory_retriever(memory_retriever)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> router;
 	agent -.-> __end__;
@@ -18,9 +19,10 @@ graph TD;
 	critic -.-> __end__;
 	critic -.-> general;
 	general --> critic;
-	router -.-> agent;
-	router -.-> billing;
-	router -.-> general;
+	memory_retriever -.-> agent;
+	memory_retriever -.-> billing;
+	memory_retriever -.-> general;
+	router --> memory_retriever;
 	tools --> agent;
 	billing --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2

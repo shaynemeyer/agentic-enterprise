@@ -33,7 +33,7 @@ async def test_fresh_thread_is_not_stale():
         app = graph_builder.compile(checkpointer=saver)
         await app.ainvoke(
             {"messages": [HumanMessage("hello")]},
-            context={"llm": _fake("hi")},
+            context={"llm": _fake("hi"), "username": "admin"},
             config=cfg,
         )
         stale = await find_stale_threads(saver, retention_days=1)
@@ -50,7 +50,7 @@ async def test_sweep_deletes_a_thread_past_the_cutoff():
         app = graph_builder.compile(checkpointer=saver)
         await app.ainvoke(
             {"messages": [HumanMessage("hello")]},
-            context={"llm": _fake("hi")},
+            context={"llm": _fake("hi"), "username": "admin"},
             config=cfg,
         )
         # Backdate this thread's checkpoint ts so retention_days=1 catches it.

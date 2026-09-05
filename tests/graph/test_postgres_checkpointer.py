@@ -38,7 +38,7 @@ async def test_thread_is_visible_to_a_second_saver_on_the_same_db():
         app = graph_builder.compile(checkpointer=saver)
         await app.ainvoke(
             {"messages": [HumanMessage("the deploy logs show an error")]},
-            context={"llm": _fake("restarted it")},
+            context={"llm": _fake("restarted it"), "username": "admin"},
             config=cfg,
         )
 
@@ -79,12 +79,12 @@ async def test_a_second_run_on_the_thread_appends():
         app = graph_builder.compile(checkpointer=saver)
         await app.ainvoke(
             {"messages": [HumanMessage("the deploy logs show an error")]},
-            context={"llm": _fake("restarted it")},
+            context={"llm": _fake("restarted it"), "username": "admin"},
             config=cfg,
         )
         result = await app.ainvoke(
             {"messages": [HumanMessage("what is the status now?")]},
-            context={"llm": _fake("all green")},
+            context={"llm": _fake("all green"), "username": "admin"},
             config=cfg,
         )
 
