@@ -3,13 +3,14 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_config, get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.runtime import Runtime
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import get_request_id
@@ -27,6 +28,28 @@ def merge_logs(existing: list[str] | None, update: list[str]) -> list[str]:
     """
     base = existing or []
     return base + [line for line in update if line not in base]
+
+
+def format_tool_error(exc: Exception) -> str:
+    """Error text handed back to the model when a tool call raises.
+
+    Passed to ToolNode as handle_tool_errors: the exception is turned into a
+    ToolMessage the model reads on the next call_model pass, so it can fix the
+    arguments and retry rather than the graph run crashing.
+
+    A bad argument surfaces as ToolInvocationError wrapping a pydantic
+    ValidationError. Unwrap to `.source` and reduce it to one line per bad
+    field, so the model sees just what to fix - not the wrapper's tail or
+    pydantic's multi-line dump with a docs URL. Anything else (a real tool
+    raising ConnectionError, TimeoutError) is reported as-is.
+    """
+    source = getattr(exc, "source", exc)
+    if isinstance(source, ValidationError):
+        fields = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in source.errors()
+        )
+        return f"Invalid arguments: {fields}. Fix them and call the tool again."
+    return f"The tool call failed: {source}. Fix the problem and try again."
 
 
 class GraphInput(TypedDict):
@@ -325,7 +348,7 @@ graph_builder = StateGraph(
 
 graph_builder.add_node("router", route_request)
 graph_builder.add_node("agent", call_model)
-graph_builder.add_node("tools", ToolNode(tools))
+graph_builder.add_node("tools", ToolNode(tools, handle_tool_errors=format_tool_error))
 graph_builder.add_node("billing", billing_worker)
 graph_builder.add_node("general", general_worker)
 graph_builder.add_node("critic", critic)
