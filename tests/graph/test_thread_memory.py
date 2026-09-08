@@ -6,18 +6,26 @@ first call's messages, while a different thread_id sees nothing.
 """
 
 import pytest
+import pytest_asyncio
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.graph.engine import workflow
+from app.graph.engine import build_workflow
+from tests.graph.mcp_probe import requires_mcp
+
+pytestmark = [requires_mcp, pytest.mark.asyncio]
+
+
+@pytest_asyncio.fixture
+async def workflow():
+    return await build_workflow()
 
 
 def _fake(*replies: str) -> FakeMessagesListChatModel:
     return FakeMessagesListChatModel(responses=[AIMessage(r) for r in replies])
 
 
-@pytest.mark.asyncio
-async def test_second_call_on_same_thread_sees_prior_messages():
+async def test_second_call_on_same_thread_sees_prior_messages(workflow):
     cfg = {"configurable": {"thread_id": "conv-a"}}
 
     # both turns hit the technical path so the agent node runs and consumes the
@@ -40,8 +48,7 @@ async def test_second_call_on_same_thread_sees_prior_messages():
     assert texts[-1] == "all green"
 
 
-@pytest.mark.asyncio
-async def test_a_different_thread_id_is_isolated():
+async def test_a_different_thread_id_is_isolated(workflow):
     await workflow.ainvoke(
         {"messages": [HumanMessage("the deploy logs show an error")]},
         context={"llm": _fake("restarted it"), "username": "admin"},
@@ -59,8 +66,7 @@ async def test_a_different_thread_id_is_isolated():
     assert "billing department" in texts[-1]
 
 
-@pytest.mark.asyncio
-async def test_missing_thread_id_is_rejected():
+async def test_missing_thread_id_is_rejected(workflow):
     with pytest.raises(ValueError, match="thread_id"):
         await workflow.ainvoke(
             {"messages": [HumanMessage("hello")]},
@@ -68,8 +74,7 @@ async def test_missing_thread_id_is_rejected():
         )
 
 
-@pytest.mark.asyncio
-async def test_state_snapshot_carries_the_routing_scratchpad():
+async def test_state_snapshot_carries_the_routing_scratchpad(workflow):
     """get_state returns the full GraphState for a thread, including the
     scratchpad keys that GraphOutput filters out of ainvoke's return."""
     cfg = {"configurable": {"thread_id": "conv-snap"}}

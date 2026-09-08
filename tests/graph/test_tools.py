@@ -2,49 +2,29 @@ import os
 from typing import Annotated, TypedDict
 
 import pytest
+import pytest_asyncio
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.prebuilt import ToolNode
-from langgraph.prebuilt.tool_node import ToolInvocationError
-from pydantic import ValidationError
 
 from app.core.llm import get_sovereign_llm
-from app.graph.tools import calculate_corporate_risk, tools
-from app.graph.tools import tools as risk_tools
+from app.graph.engine import format_tool_error
+from app.graph.tools import load_tools
+from app.mcp.risk_server import calculate_corporate_risk
+from tests.graph.mcp_probe import requires_mcp
 
-
-def test_rejects_industry_outside_the_enum():
-    with pytest.raises(ValidationError):
-        calculate_corporate_risk.invoke(
-            {
-                "company_name": "AI Corp",
-                "industry": "Entertainment",
-                "exposure_value": 50_000,
-                "is_regulated": False,
-            }
-        )
-
-
-def test_rejects_non_positive_exposure():
-    with pytest.raises(ValidationError):
-        calculate_corporate_risk.invoke(
-            {
-                "company_name": "AI Corp",
-                "industry": "Tech",
-                "exposure_value": 0,
-                "is_regulated": False,
-            }
-        )
+# calculate_corporate_risk moved to the MCP server (Lab 44). @mcp.tool()
+# returns the function unchanged, so the pure-logic tests call it directly;
+# the ToolNode tests go through load_tools() and need the server running.
+_risk = calculate_corporate_risk
 
 
 def test_valid_call_returns_deterministic_score():
-    result = calculate_corporate_risk.invoke(
-        {
-            "company_name": "CyberBank",
-            "industry": "Finance",
-            "exposure_value": 200_000,
-            "is_regulated": True,
-        }
+    result = _risk(
+        company_name="CyberBank",
+        industry="Finance",
+        exposure_value=200_000,
+        is_regulated=True,
     )
     assert result == {
         "entity": "CyberBank",
@@ -55,12 +35,10 @@ def test_valid_call_returns_deterministic_score():
 
 
 def test_is_regulated_defaults_to_true():
-    result = calculate_corporate_risk.invoke(
-        {
-            "company_name": "CyberBank",
-            "industry": "Finance",
-            "exposure_value": 200_000,
-        }
+    result = _risk(
+        company_name="CyberBank",
+        industry="Finance",
+        exposure_value=200_000,
     )
     assert result["risk_score"] == 45_000.0
 
@@ -71,9 +49,11 @@ needs_llm = pytest.mark.skipif(
 )
 
 
+@requires_mcp
 @needs_llm
-def test_model_requests_the_risk_tool():
-    bound = get_sovereign_llm().bind_tools(risk_tools)
+@pytest.mark.asyncio
+async def test_model_requests_the_risk_tool():
+    bound = get_sovereign_llm().bind_tools(await load_tools())
     prompt = (
         "Assess the corporate risk for Initech, a Manufacturing company "
         "with 4,000,000 dollars of exposure. It is not regulated."
@@ -101,32 +81,80 @@ def _one_node_graph(node: ToolNode):
     return g.compile()
 
 
-def _bad_risk_call() -> AIMessage:
+def _text(msg) -> str:
+    """A ToolMessage from an MCP tool carries a list of content blocks, not a
+    bare string. Join the text ones."""
+    if isinstance(msg.content, str):
+        return msg.content
+    return "".join(b.get("text", "") for b in msg.content if isinstance(b, dict))
+
+
+def _risk_call(**args) -> AIMessage:
     return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "calculate_corporate_risk", "args": args, "id": "call_x"}
+        ],
+    )
+
+
+@pytest_asyncio.fixture
+async def graph_tools():
+    return await load_tools()
+
+
+@requires_mcp
+@pytest.mark.asyncio
+async def test_toolnode_returns_a_result_for_a_good_call(graph_tools):
+    good = AIMessage(
         content="",
         tool_calls=[
             {
                 "name": "calculate_corporate_risk",
                 "args": {
-                    "company_name": "Initech",
-                    "industry": "Entertainment",
-                    "exposure_value": 50_000,
+                    "company_name": "CyberBank",
+                    "industry": "Finance",
+                    "exposure_value": 200_000,
+                    "is_regulated": True,
                 },
-                "id": "call_1",
+                "id": "call_ok",
             }
         ],
     )
+    out = await _one_node_graph(
+        ToolNode(graph_tools, handle_tool_errors=format_tool_error)
+    ).ainvoke({"messages": [good]})
+    msg = out["messages"][-1]
+    assert msg.status != "error"
+    assert '"risk_score": 45000.0' in _text(msg)
 
 
-def test_toolnode_returns_error_message_by_default():
-    out = _one_node_graph(ToolNode(tools)).invoke({"messages": [_bad_risk_call()]})
+@requires_mcp
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {
+            "company_name": "AI Corp",
+            "industry": "Entertainment",
+            "exposure_value": 50_000,
+        },
+        {"company_name": "AI Corp", "industry": "Tech", "exposure_value": 0},
+    ],
+    ids=["industry-outside-enum", "non-positive-exposure"],
+)
+async def test_toolnode_reports_a_bad_argument(graph_tools, bad_args):
+    # The argument constraints (Literal[...], gt=0) still run - now in
+    # FastMCP's generated wrapper on the server. It catches the pydantic
+    # ValidationError and returns it as an error result, so the client does
+    # not raise and format_tool_error never sees a ValidationError. What
+    # reaches the model is the server's "Error executing tool ..." text as an
+    # error ToolMessage - enough to retry or give up on, and it does not
+    # crash the run.
+    out = await _one_node_graph(
+        ToolNode(graph_tools, handle_tool_errors=format_tool_error)
+    ).ainvoke({"messages": [_risk_call(**bad_args)]})
     msg = out["messages"][-1]
     assert msg.status == "error"
-    assert "calculate_corporate_risk" in msg.content
-
-
-def test_toolnode_can_be_made_strict():
-    with pytest.raises(ToolInvocationError):
-        _one_node_graph(ToolNode(tools, handle_tool_errors=False)).invoke(
-            {"messages": [_bad_risk_call()]}
-        )
+    assert "calculate_corporate_risk" in _text(msg)
+    assert "validation error" in _text(msg).lower()

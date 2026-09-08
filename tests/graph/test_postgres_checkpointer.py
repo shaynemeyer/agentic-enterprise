@@ -19,10 +19,14 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from app.graph.engine import graph_builder
+from app.graph.engine import compile_graph
+from tests.graph.mcp_probe import requires_mcp
 
 DB_URL = os.getenv("CHECKPOINT_TEST_DSN")
-pytestmark = pytest.mark.skipif(not DB_URL, reason="CHECKPOINT_TEST_DSN not set")
+pytestmark = [
+    pytest.mark.skipif(not DB_URL, reason="CHECKPOINT_TEST_DSN not set"),
+    requires_mcp,
+]
 
 
 def _fake(*replies: str) -> FakeMessagesListChatModel:
@@ -35,7 +39,7 @@ async def test_thread_is_visible_to_a_second_saver_on_the_same_db():
 
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        app = graph_builder.compile(checkpointer=saver)
+        app = await compile_graph(saver)
         await app.ainvoke(
             {"messages": [HumanMessage("the deploy logs show an error")]},
             context={"llm": _fake("restarted it"), "username": "admin"},
@@ -44,7 +48,7 @@ async def test_thread_is_visible_to_a_second_saver_on_the_same_db():
 
     # a separate connection - what a second worker / replica would use
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver2:
-        app2 = graph_builder.compile(checkpointer=saver2)
+        app2 = await compile_graph(saver2)
         snapshot = await app2.aget_state(cfg)
 
     texts = [m.content for m in snapshot.values["messages"]]
@@ -76,7 +80,7 @@ async def test_a_second_run_on_the_thread_appends():
 
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        app = graph_builder.compile(checkpointer=saver)
+        app = await compile_graph(saver)
         await app.ainvoke(
             {"messages": [HumanMessage("the deploy logs show an error")]},
             context={"llm": _fake("restarted it"), "username": "admin"},

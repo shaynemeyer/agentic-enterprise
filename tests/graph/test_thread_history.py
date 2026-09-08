@@ -12,7 +12,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from app.graph.engine import graph_builder
+from app.graph.engine import compile_graph
 from app.graph.history import (
     branch_tree,
     checkpoint_config,
@@ -20,9 +20,13 @@ from app.graph.history import (
     is_interrupted,
     thread_timeline,
 )
+from tests.graph.mcp_probe import requires_mcp
 
 DB_URL = os.getenv("CHECKPOINT_TEST_DSN")
-pytestmark = pytest.mark.skipif(not DB_URL, reason="CHECKPOINT_TEST_DSN not set")
+pytestmark = [
+    pytest.mark.skipif(not DB_URL, reason="CHECKPOINT_TEST_DSN not set"),
+    requires_mcp,
+]
 
 
 def _fake(*replies: str) -> FakeMessagesListChatModel:
@@ -35,7 +39,7 @@ async def test_completed_thread_has_history_and_is_not_interrupted():
     cfg = {"configurable": {"thread_id": tid}}
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        graph = graph_builder.compile(checkpointer=saver)
+        graph = await compile_graph(saver)
         await graph.ainvoke(
             {"messages": [HumanMessage("hello")]},
             context={"llm": _fake("hi there"), "username": "admin"},
@@ -54,7 +58,7 @@ async def test_completed_thread_has_history_and_is_not_interrupted():
 async def test_unknown_thread_has_empty_timeline():
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        graph = graph_builder.compile(checkpointer=saver)
+        graph = await compile_graph(saver)
         assert await thread_timeline(graph, f"nope-{uuid.uuid4()}") == []
 
 
@@ -64,7 +68,7 @@ async def test_edit_writes_a_new_checkpoint_without_touching_the_original():
     cfg = {"configurable": {"thread_id": tid}}
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        graph = graph_builder.compile(checkpointer=saver)
+        graph = await compile_graph(saver)
         await graph.ainvoke(
             {"messages": [HumanMessage("hello")]},
             context={"llm": _fake("hi there"), "username": "admin"},
@@ -102,7 +106,7 @@ async def test_branch_tree_groups_fork_children_under_their_parent():
     cfg = {"configurable": {"thread_id": tid}}
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        graph = graph_builder.compile(checkpointer=saver)
+        graph = await compile_graph(saver)
         await graph.ainvoke(
             {"messages": [HumanMessage("hello")]},
             context={"llm": _fake("hi there"), "username": "admin"},

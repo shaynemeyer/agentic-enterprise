@@ -19,7 +19,7 @@ from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.llm import get_sovereign_llm
 from app.core.security import limiter
 from app.database import get_db
-from app.graph.engine import workflow
+from app.graph.engine import build_workflow
 from app.graph.gc import _conn, sweep
 from app.graph.history import (
     branch_tree,
@@ -29,7 +29,7 @@ from app.graph.history import (
     thread_timeline,
 )
 from app.graph.ownership import is_admin, owned_thread_ids
-from app.graph.tools import tools
+from app.graph.tools import get_tools
 from app.memory.vector_store import remember, search
 from app.models import AgentExecution
 from app.schemas.agent_schema import (
@@ -69,12 +69,14 @@ SELECT
 @router.post("/admin/gc")
 async def run_gc(user: CurrentUser = Depends(get_current_user)):
     """Trigger a checkpoint retention sweep now. Same logic as the hourly task."""
+    workflow = await build_workflow()
     return await sweep(workflow.checkpointer, settings.checkpoint_retention_days)
 
 
 @router.get("/admin/gc/stats")
 async def gc_stats(user: CurrentUser = Depends(get_current_user)):
     """Row counts per checkpoint table and the age of the oldest live thread."""
+    workflow = await build_workflow()
     async with _conn(workflow.checkpointer) as conn:
         cur = await conn.execute(_STATS_QUERY)
         row = await cur.fetchone()
@@ -113,8 +115,9 @@ async def run_agent_stream(
     async def events():
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
         try:
+            workflow = await build_workflow()
             request_llm = get_sovereign_llm()
-            tool_llm = request_llm.bind_tools(tools)
+            tool_llm = request_llm.bind_tools(await get_tools())
 
             async for mode, chunk in workflow.astream(
                 initial_state,
@@ -172,8 +175,9 @@ async def run_agent(
         # Crucial: Use ainvoke for non-blocking execution
         initial_state = {"messages": [HumanMessage(payload.task_description)]}
 
+        workflow = await build_workflow()
         request_llm = get_sovereign_llm()
-        tool_llm = request_llm.bind_tools(tools)
+        tool_llm = request_llm.bind_tools(await get_tools())
 
         # The engine works while the CPU handles other requests
         result = await workflow.ainvoke(
@@ -234,8 +238,9 @@ async def ask(
     """
     initial_state = {"messages": [HumanMessage(q)]}
 
+    workflow = await build_workflow()
     request_llm = get_sovereign_llm()
-    tool_llm = request_llm.bind_tools(tools)
+    tool_llm = request_llm.bind_tools(await get_tools())
 
     # No request_id on this route - key the thread per user so a user's /ask
     # calls share one conversation. (Cache hits skip the graph entirely.)
@@ -263,6 +268,7 @@ async def get_conversation(
     empty list if the thread was never written or has been pruned.
     """
     config = {"configurable": {"thread_id": conversation_id}}
+    workflow = await build_workflow()
     snapshot = await workflow.aget_state(config)
 
     messages: list[BaseMessage] = snapshot.values.get("messages", [])
@@ -277,6 +283,7 @@ async def thread_history(
     user: CurrentUser = Depends(require_thread_owner),
 ):
     """Every checkpoint for a thread, newest first. Empty list if unknown."""
+    workflow = await build_workflow()
     timeline = await thread_timeline(workflow, thread_id, limit=limit)
     return {
         "thread_id": thread_id,
@@ -297,6 +304,7 @@ async def resume_thread(
     Invokes with None as input, so LangGraph continues from the last checkpoint
     instead of starting the graph over.
     """
+    workflow = await build_workflow()
     if not await is_interrupted(workflow, thread_id):
         raise HTTPException(
             status_code=404,
@@ -304,7 +312,7 @@ async def resume_thread(
         )
 
     request_llm = get_sovereign_llm()
-    tool_llm = request_llm.bind_tools(tools)
+    tool_llm = request_llm.bind_tools(await get_tools())
     result = await workflow.ainvoke(
         None,  # resume, do not append
         context={
@@ -335,8 +343,9 @@ async def fork_thread(
     Does not modify the original chain - the fork is a sibling branch sharing
     history up to checkpoint_id.
     """
+    workflow = await build_workflow()
     request_llm = get_sovereign_llm()
-    tool_llm = request_llm.bind_tools(tools)
+    tool_llm = request_llm.bind_tools(await get_tools())
     result = await workflow.ainvoke(
         {"messages": [HumanMessage(message)]},
         context={
@@ -384,6 +393,7 @@ async def edit_thread_checkpoint(
             status_code=422, detail="Provide critique and/or revision_count."
         )
 
+    workflow = await build_workflow()
     new_config = await edit_checkpoint(
         workflow, thread_id, checkpoint_id, values, as_node=as_node
     )
@@ -402,6 +412,7 @@ async def thread_branches(
     user: CurrentUser = Depends(require_thread_owner),
 ):
     """Checkpoints grouped by parent - where a thread forked or was edited."""
+    workflow = await build_workflow()
     timeline = await thread_timeline(workflow, thread_id, limit=limit)
     tree = branch_tree(timeline)
     fork_points = {p: len(c) for p, c in tree.items() if p is not None and len(c) > 1}

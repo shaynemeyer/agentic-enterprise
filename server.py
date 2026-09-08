@@ -13,7 +13,7 @@ class AgentResponse(BaseModel):
 
 from fastapi import FastAPI, HTTPException
 
-from app.graph.engine import workflow as graph
+from app.graph.engine import build_workflow
 
 app = FastAPI(title="Enterprise Agentic Gateway V1")
 
@@ -24,10 +24,10 @@ async def run_agent_endpoint(request: AgentRequest):
         # Initialize state for the graph
         initial_state = {"messages": [request.input_text], "status": "starting"}
 
-        # Execute the graph (Synchronous for now, per Lab 8 architecture)
         config = {"configurable": {"thread_id": request.thread_id}}
 
-        result = graph.invoke(initial_state, config=config)
+        graph = await build_workflow()
+        result = await graph.ainvoke(initial_state, config=config)
 
         return AgentResponse(final_state=result)
 
