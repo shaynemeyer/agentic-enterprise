@@ -3,12 +3,15 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.graph.engine import workflow
+from app.graph.engine import build_workflow
+from tests.graph.mcp_probe import requires_mcp
 
 
+@requires_mcp
 @pytest.mark.asyncio
 async def test_call_model_uses_injected_llm():
     fake = FakeMessagesListChatModel(responses=[AIMessage("stubbed reply")])
+    workflow = await build_workflow()
 
     # "status" is a router keyword -> routes to `agent` -> call_model runs.
     result = await workflow.ainvoke(

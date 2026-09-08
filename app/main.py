@@ -26,11 +26,15 @@ from app.core.exceptions import AgenticException, MaxRecursionError
 from app.core.llm import get_sovereign_llm
 from app.core.security import limiter
 from app.graph.gc import sweep
-from app.graph.tools import tools
+from app.graph.tools import get_tools
 from app.schemas.errors import ErrorResponse
 
-from .graph.engine import workflow
+from .graph.engine import build_workflow
 from .schemas.agent_schema import SmokeTestRequest, SmokeTestResponse
+
+# The graph's "tools" node is built from an MCP call now, so the compiled
+# graph is loaded in the lifespan handler instead of imported at module load.
+workflow = None
 
 
 class RequestIdFilter(logging.Filter):
@@ -56,6 +60,12 @@ SMOKE_TEST_TIMEOUT_S = 60
 async def lifespan(app: FastAPI):
     # Startup: LangGraph agents, vector DB clients, HTTP pools
     logger.info("Initializing Sovereign Agentic Core...")
+
+    # Compile the graph; its "tools" node loads from the risk MCP server.
+    # Fails loudly here if that server is unreachable - do not start a
+    # service whose tools are missing.
+    global workflow
+    workflow = await build_workflow()
 
     async with AsyncExitStack() as stack:
         # Persistent checkpointer: a psycopg pool + AsyncPostgresSaver.
@@ -212,7 +222,7 @@ async def run_smoke_test(request: SmokeTestRequest):
                 initial_state,
                 context={
                     "llm": smoke_llm,
-                    "tool_llm": smoke_llm.bind_tools(tools),
+                    "tool_llm": smoke_llm.bind_tools(await get_tools()),
                     "username": settings.demo_username,
                 },
                 config={"configurable": {"thread_id": f"smoke:{request.test_id}"}},

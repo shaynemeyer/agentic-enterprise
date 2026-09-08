@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api.v1 import endpoints
 from app.core.config import settings
 from app.database import get_db
+from app.graph import tools as graph_tools_mod
 from app.main import app
 
 
@@ -44,6 +45,7 @@ class _FakeWorkflow:
 
     def __init__(self):
         self.calls = 0
+        self.checkpointer = None
 
     async def ainvoke(self, _state, *, context=None, config=None):
         self.calls += 1
@@ -84,9 +86,28 @@ def fake_db():
 @pytest.fixture
 def fake_workflow(monkeypatch):
     """Swap the real graph for the counting stub; return it so a test can read
-    `.calls`."""
+    `.calls`.
+
+    The handlers call `build_workflow()` per request now (the tool list loads
+    from the MCP server at build time), so patch that to hand back the stub -
+    and the cached `_workflow` so nothing rebuilds the real graph.
+    """
     fake = _FakeWorkflow()
-    monkeypatch.setattr(endpoints, "workflow", fake)
+
+    async def _fake_build():
+        return fake
+
+    async def _fake_get_tools():
+        return []
+
+    monkeypatch.setattr(engine, "_workflow", fake)
+    monkeypatch.setattr(engine, "build_workflow", _fake_build)
+    monkeypatch.setattr(endpoints, "build_workflow", _fake_build)
+    # The handlers also call get_tools() directly to bind them to the LLM;
+    # without this that reaches the real MCP server.
+    monkeypatch.setattr(endpoints, "get_tools", _fake_get_tools)
+    monkeypatch.setattr(graph_tools_mod, "get_tools", _fake_get_tools)
+    monkeypatch.setattr(graph_tools_mod, "load_tools", _fake_get_tools)
     return fake
 
 

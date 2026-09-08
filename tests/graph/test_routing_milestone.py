@@ -5,18 +5,26 @@ Node-level behaviour is covered in test_nodes.py. This drives the compiled
 """
 
 import pytest
+import pytest_asyncio
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.graph.engine import workflow
+from app.graph.engine import build_workflow
+from tests.graph.mcp_probe import requires_mcp
+
+pytestmark = [requires_mcp, pytest.mark.asyncio]
+
+
+@pytest_asyncio.fixture
+async def workflow():
+    return await build_workflow()
 
 
 def _fake(*replies: str) -> FakeMessagesListChatModel:
     return FakeMessagesListChatModel(responses=[AIMessage(r) for r in replies])
 
 
-@pytest.mark.asyncio
-async def test_technical_message_routes_through_the_agent():
+async def test_technical_message_routes_through_the_agent(workflow):
     result = await workflow.ainvoke(
         {"messages": [HumanMessage("the deploy logs show an error in agent-api")]},
         context={"llm": _fake("restarted the service"), "username": "admin"},
@@ -26,8 +34,7 @@ async def test_technical_message_routes_through_the_agent():
     assert result["status"] == "completed"
 
 
-@pytest.mark.asyncio
-async def test_billing_message_routes_to_the_billing_worker():
+async def test_billing_message_routes_to_the_billing_worker(workflow):
     # billing_worker (Lab 40) calls the LLM for real now, so the fake supplies
     # the reply - one call, one response.
     result = await workflow.ainvoke(
@@ -39,8 +46,7 @@ async def test_billing_message_routes_to_the_billing_worker():
     assert result["status"] == "completed"
 
 
-@pytest.mark.asyncio
-async def test_general_message_runs_the_critic_loop_to_a_pass():
+async def test_general_message_runs_the_critic_loop_to_a_pass(workflow):
     # First draft is a bare stub -> critic rejects -> general re-runs and
     # emits a "revised" draft -> critic PASSes on attempt 2. The `general` path
     # has no node that sets status="completed" after a PASS, so the terminal
@@ -60,8 +66,7 @@ async def test_general_message_runs_the_critic_loop_to_a_pass():
     assert result["status"] == "critiqued"
 
 
-@pytest.mark.asyncio
-async def test_general_path_stays_within_the_revision_limit():
+async def test_general_path_stays_within_the_revision_limit(workflow):
     """The critic loop must not run away. GENERAL_REVISION_LIMIT = 3 forces a
     PASS, so `general` runs at most 3 times - well inside the default
     recursion_limit of 25. If this hangs or raises GraphRecursionError, the

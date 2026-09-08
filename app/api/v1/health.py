@@ -18,13 +18,13 @@ async def health_check():
 @router.get("/graph", response_class=PlainTextResponse, tags=["System"])
 async def graph_structure() -> str:
     """The compiled agent graph as Mermaid text. Paste into any Mermaid viewer."""
-    return graph_mermaid()
+    return await graph_mermaid()
 
 
 @router.get("/graph.png", tags=["System"])
 async def graph_image() -> Response:
     try:
-        return Response(content=graph_png(), media_type="image/png")
+        return Response(content=await graph_png(), media_type="image/png")
     except Exception as exc:
         raise HTTPException(
             status_code=502,

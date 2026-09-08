@@ -13,11 +13,15 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from app.graph.engine import graph_builder
+from app.graph.engine import compile_graph
 from app.graph.gc import find_stale_threads, sweep
+from tests.graph.mcp_probe import requires_mcp
 
 DB_URL = os.getenv("CHECKPOINT_TEST_DSN")
-pytestmark = pytest.mark.skipif(not DB_URL, reason="CHECKPOINT_TEST_DSN not set")
+pytestmark = [
+    pytest.mark.skipif(not DB_URL, reason="CHECKPOINT_TEST_DSN not set"),
+    requires_mcp,
+]
 
 
 def _fake(*replies: str) -> FakeMessagesListChatModel:
@@ -30,7 +34,7 @@ async def test_fresh_thread_is_not_stale():
     cfg = {"configurable": {"thread_id": tid}}
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        app = graph_builder.compile(checkpointer=saver)
+        app = await compile_graph(saver)
         await app.ainvoke(
             {"messages": [HumanMessage("hello")]},
             context={"llm": _fake("hi"), "username": "admin"},
@@ -47,7 +51,7 @@ async def test_sweep_deletes_a_thread_past_the_cutoff():
     cfg = {"configurable": {"thread_id": tid}}
     async with AsyncPostgresSaver.from_conn_string(DB_URL) as saver:
         await saver.setup()
-        app = graph_builder.compile(checkpointer=saver)
+        app = await compile_graph(saver)
         await app.ainvoke(
             {"messages": [HumanMessage("hello")]},
             context={"llm": _fake("hi"), "username": "admin"},

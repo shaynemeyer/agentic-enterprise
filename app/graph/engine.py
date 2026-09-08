@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Annotated, Literal, TypedDict
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
 from app.graph.ownership import is_admin, owned_thread_ids
-from app.graph.tools import tools
+from app.graph.tools import load_tools
 from app.memory.vector_store import search
 
 
@@ -348,7 +349,6 @@ graph_builder = StateGraph(
 
 graph_builder.add_node("router", route_request)
 graph_builder.add_node("agent", call_model)
-graph_builder.add_node("tools", ToolNode(tools, handle_tool_errors=format_tool_error))
 graph_builder.add_node("billing", billing_worker)
 graph_builder.add_node("general", general_worker)
 graph_builder.add_node("critic", critic)
@@ -374,22 +374,58 @@ graph_builder.add_conditional_edges("critic", after_critic)
 # In-memory thread-level memory. Volatile - state lives in this process only
 # and is lost on restart.
 checkpointer = InMemorySaver()
-workflow = graph_builder.compile(checkpointer=checkpointer)
+
+_workflow = None
+_build_lock = asyncio.Lock()
 
 
-def graph_mermaid() -> str:
+async def _ensure_tools_node() -> None:
+    """Add the "tools" node to graph_builder if it isn't there yet.
+
+    The node's tool list comes from load_tools(), an MCP call that can't run
+    at module import - so unlike every other node it is added here, once, on
+    the first build. Idempotent so a second compile (a checkpointer test) is
+    fine.
+    """
+    if "tools" not in graph_builder.nodes:
+        graph_tools = await load_tools()
+        graph_builder.add_node(
+            "tools", ToolNode(graph_tools, handle_tool_errors=format_tool_error)
+        )
+
+
+async def compile_graph(saver):
+    """Compile the graph with a given checkpointer. Async: see _ensure_tools_node."""
+    await _ensure_tools_node()
+    return graph_builder.compile(checkpointer=saver)
+
+
+async def build_workflow():
+    """The app's compiled graph, built once and cached.
+
+    Call at startup; every later caller gets the same compiled graph. The
+    lock keeps two concurrent first calls from racing on the build.
+    """
+    global _workflow
+    async with _build_lock:
+        if _workflow is None:
+            _workflow = await compile_graph(checkpointer)
+    return _workflow
+
+
+async def graph_mermaid() -> str:
     """The compiled graph as a Mermaid flowchart. Regenerate docs from this."""
+    workflow = await build_workflow()
     return workflow.get_graph().draw_mermaid()
 
 
-def graph_png() -> bytes:
+async def graph_png() -> bytes:
     """PNG of the compiled graph. Calls the mermaid.ink API - needs outbound HTTPS."""
+    workflow = await build_workflow()
     return workflow.get_graph().draw_mermaid_png()
 
 
 if __name__ == "__main__":
-    import asyncio
-
     from langchain_core.messages import HumanMessage
 
     prompts = [
@@ -399,7 +435,10 @@ if __name__ == "__main__":
     ]
 
     async def _main() -> None:
+        workflow = await build_workflow()
         demo_llm = get_sovereign_llm()
+        graph_tools = await load_tools()
+
         for p in prompts:
             print(f"\n=== {p} ===")
             state = {"messages": [HumanMessage(p)], "status": "starting"}
@@ -408,7 +447,7 @@ if __name__ == "__main__":
                 stream_mode="values",
                 context={
                     "llm": demo_llm,
-                    "tool_llm": demo_llm.bind_tools(tools),
+                    "tool_llm": demo_llm.bind_tools(graph_tools),
                     "username": "admin",
                 },
                 output_keys=list(GraphState.__annotations__),
