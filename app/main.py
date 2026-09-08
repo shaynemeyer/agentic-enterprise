@@ -32,10 +32,6 @@ from app.schemas.errors import ErrorResponse
 from .graph.engine import build_workflow
 from .schemas.agent_schema import SmokeTestRequest, SmokeTestResponse
 
-# The graph's "tools" node is built from an MCP call now, so the compiled
-# graph is loaded in the lifespan handler instead of imported at module load.
-workflow = None
-
 
 class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -64,7 +60,6 @@ async def lifespan(app: FastAPI):
     # Compile the graph; its "tools" node loads from the risk MCP server.
     # Fails loudly here if that server is unreachable - do not start a
     # service whose tools are missing.
-    global workflow
     workflow = await build_workflow()
 
     async with AsyncExitStack() as stack:
@@ -217,8 +212,9 @@ async def run_smoke_test(request: SmokeTestRequest):
         # Invoking the LangGraph workflow
         initial_state = {"messages": [("user", request.payload)]}
         smoke_llm = get_sovereign_llm()
+        graph = await build_workflow()
         result = await asyncio.wait_for(
-            workflow.ainvoke(
+            graph.ainvoke(
                 initial_state,
                 context={
                     "llm": smoke_llm,
