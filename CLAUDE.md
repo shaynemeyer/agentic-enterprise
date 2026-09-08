@@ -23,3 +23,5 @@ coexists with a native Postgres a dev may run on 5432. From the host, connect to
 `localhost:5433`; inside the compose network, services use `db:5432`. When adding any
 future service whose default port a dev might already run natively, map it to a
 non-default host port the same way.
+
+NEVER ADD THE COMMIT ATTRIBUTIONS!!!
