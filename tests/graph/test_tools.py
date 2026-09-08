@@ -1,11 +1,16 @@
 import os
+from typing import Annotated, TypedDict
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.graph import END, START, StateGraph, add_messages
+from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt.tool_node import ToolInvocationError
 from pydantic import ValidationError
 
 from app.core.llm import get_sovereign_llm
-from app.graph.tools import calculate_corporate_risk, tools as risk_tools
+from app.graph.tools import calculate_corporate_risk, tools
+from app.graph.tools import tools as risk_tools
 
 
 def test_rejects_industry_outside_the_enum():
@@ -82,3 +87,46 @@ def test_model_requests_the_risk_tool():
     assert call["args"]["industry"] == "Manufacturing"
     assert call["args"]["exposure_value"] == 4_000_000
     assert call["args"]["is_regulated"] is False
+
+
+class _MsgState(TypedDict):
+    messages: Annotated[list, add_messages]
+
+
+def _one_node_graph(node: ToolNode):
+    g = StateGraph(_MsgState)
+    g.add_node("tools", node)
+    g.add_edge(START, "tools")
+    g.add_edge("tools", END)
+    return g.compile()
+
+
+def _bad_risk_call() -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "calculate_corporate_risk",
+                "args": {
+                    "company_name": "Initech",
+                    "industry": "Entertainment",
+                    "exposure_value": 50_000,
+                },
+                "id": "call_1",
+            }
+        ],
+    )
+
+
+def test_toolnode_returns_error_message_by_default():
+    out = _one_node_graph(ToolNode(tools)).invoke({"messages": [_bad_risk_call()]})
+    msg = out["messages"][-1]
+    assert msg.status == "error"
+    assert "calculate_corporate_risk" in msg.content
+
+
+def test_toolnode_can_be_made_strict():
+    with pytest.raises(ToolInvocationError):
+        _one_node_graph(ToolNode(tools, handle_tool_errors=False)).invoke(
+            {"messages": [_bad_risk_call()]}
+        )
