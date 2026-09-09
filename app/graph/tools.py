@@ -11,6 +11,8 @@ import os
 from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from app.core.config import settings
+
 
 @tool
 def get_deployment_status(service_name: str) -> str:
@@ -25,13 +27,22 @@ def get_deployment_status(service_name: str) -> str:
 
 
 MCP_RISK_URL = os.environ.get("MCP_RISK_URL", "http://127.0.0.1:8100/mcp")
+MCP_FS_URL = os.environ.get("MCP_FS_URL", "http://127.0.0.1:8101/mcp")
+
+_auth_headers = {"Authorization": f"Bearer {settings.mcp_auth_token}"}
 
 _mcp_client = MultiServerMCPClient(
     {
         "risk": {
             "transport": "streamable_http",
             "url": MCP_RISK_URL,
-        }
+            "headers": _auth_headers,
+        },
+        "filesystem": {
+            "transport": "streamable_http",
+            "url": MCP_FS_URL,
+            "headers": _auth_headers,
+        },
     }
 )
 

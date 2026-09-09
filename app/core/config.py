@@ -41,6 +41,12 @@ class Settings(BaseSettings):
 
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "agent_memories"
+    mcp_auth_token: str = "dev-only-change-me"
+    agent_files_dir: str = "./agent_files"
+    agent_files_max_write_bytes: int = 1_048_576  # 1 MiB
+    # "dev" | "staging" | "prod". Guards that must not fire locally but
+    # must fire in a real deployment check against this.
+    app_env: str = "dev"
 
 
 settings = Settings()

@@ -80,4 +80,9 @@ def calculate_corporate_risk(
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    import uvicorn
+
+    from app.mcp.auth import require_bearer_token
+
+    app = require_bearer_token(mcp.streamable_http_app())
+    uvicorn.run(app, host="127.0.0.1", port=8100)
