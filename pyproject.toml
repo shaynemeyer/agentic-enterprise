@@ -25,6 +25,7 @@ dependencies = [
     "qdrant-client>=1.19.0",
     "mcp>=1.24",
     "langchain-mcp-adapters>=0.3",
+    "alembic>=1.19.2",
 ]
 
 [dependency-groups]

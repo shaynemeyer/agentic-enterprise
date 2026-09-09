@@ -1,6 +1,7 @@
 import os
 from typing import Annotated, TypedDict
 
+import httpx
 import pytest
 import pytest_asyncio
 from langchain_core.messages import AIMessage, HumanMessage
@@ -92,9 +93,7 @@ def _text(msg) -> str:
 def _risk_call(**args) -> AIMessage:
     return AIMessage(
         content="",
-        tool_calls=[
-            {"name": "calculate_corporate_risk", "args": args, "id": "call_x"}
-        ],
+        tool_calls=[{"name": "calculate_corporate_risk", "args": args, "id": "call_x"}],
     )
 
 
@@ -158,3 +157,48 @@ async def test_toolnode_reports_a_bad_argument(graph_tools, bad_args):
     assert msg.status == "error"
     assert "calculate_corporate_risk" in _text(msg)
     assert "validation error" in _text(msg).lower()
+
+
+FS_URL = "http://127.0.0.1:8101/mcp"
+
+
+def _fs_up() -> bool:
+    try:
+        httpx.get(FS_URL.rsplit("/mcp", 1)[0], timeout=0.5)
+        return True
+    except httpx.HTTPError:
+        return False
+
+
+requires_fs = pytest.mark.skipif(
+    not _fs_up(), reason="filesystem MCP server not running"
+)
+
+
+def _read_call(path: str) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": "read_text_file", "args": {"path": path}, "id": "call_r"}],
+    )
+
+
+@pytest.mark.asyncio
+@requires_mcp
+@requires_fs
+async def test_filesystem_jail_rejects_traversal():
+    tools = await load_tools()
+    out = await _one_node_graph(
+        ToolNode(tools, handle_tool_errors=format_tool_error)
+    ).ainvoke({"messages": [_read_call("../../etc/passwd")]})
+    msg = out["messages"][-1]
+    assert msg.status == "error"
+    assert "escapes" in _text(msg)
+
+
+@pytest.mark.asyncio
+async def test_write_rejects_oversize_payload(monkeypatch):
+    from app.mcp import fs_server
+
+    monkeypatch.setattr(fs_server.settings, "agent_files_max_write_bytes", 10)
+    with pytest.raises(ValueError, match="exceeds"):
+        await fs_server.write_text_file(path="big.txt", content="x" * 50)

@@ -42,3 +42,6 @@ docs/.sample-responses
 
 # Exclude backups for devs
 .db-backups
+
+agent_files/
+!agent_files/policy.md
