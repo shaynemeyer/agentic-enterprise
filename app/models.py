@@ -33,3 +33,18 @@ class FileAuditEvent(Base, TimestampMixin):
     action: Mapped[str] = mapped_column(String(32))  # "write" | "create"
     byte_count: Mapped[int] = mapped_column()
     preview: Mapped[str] = mapped_column(Text)  # first 200 chars written
+
+
+class BalanceQueryEvent(Base, TimestampMixin):
+    """One row per finance-API lookup the agent made. `created_at` is the
+    query time. thread_id / username tie it back to the graph run so it
+    joins to thread_ownership."""
+
+    __tablename__ = "balance_query_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(64))
+    thread_id: Mapped[str | None] = mapped_column(String(128))
+    username: Mapped[str | None] = mapped_column(String(128))
+    outcome: Mapped[str] = mapped_column(String(16))  # "ok" | "error"
+    detail: Mapped[str | None] = mapped_column(String(256))  # error text, if any
