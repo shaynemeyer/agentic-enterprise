@@ -147,7 +147,10 @@ async def route_request(state: GraphState) -> dict:
 
     text = state["messages"][-1].content.lower()
 
-    if any(w in text for w in ("deploy", "status", "error", "logs", "service")):
+    if any(
+        w in text
+        for w in ("deploy", "status", "error", "logs", "service", "balance", "account")
+    ):
         decision = "technical"
     elif any(w in text for w in ("invoice", "payment", "billing", "charge")):
         decision = "billing"

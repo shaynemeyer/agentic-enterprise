@@ -48,5 +48,11 @@ class Settings(BaseSettings):
     # must fire in a real deployment check against this.
     app_env: str = "dev"
 
+    finance_api_url: str = "http://127.0.0.1:8102"
+    finance_oauth_token_url: str = "http://127.0.0.1:8102/oauth/token"
+    finance_oauth_client_id: str = "finance-mcp-server"
+    finance_oauth_client_secret: str = "dev-only-change-me"
+    finance_oauth_scope: str = "ledger.read"
+
 
 settings = Settings()

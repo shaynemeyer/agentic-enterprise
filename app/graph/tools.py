@@ -28,6 +28,7 @@ def get_deployment_status(service_name: str) -> str:
 
 MCP_RISK_URL = os.environ.get("MCP_RISK_URL", "http://127.0.0.1:8100/mcp")
 MCP_FS_URL = os.environ.get("MCP_FS_URL", "http://127.0.0.1:8101/mcp")
+MCP_FINANCE_URL = os.environ.get("MCP_FINANCE_URL", "http://127.0.0.1:8103/mcp")
 
 _auth_headers = {"Authorization": f"Bearer {settings.mcp_auth_token}"}
 
@@ -41,6 +42,11 @@ _mcp_client = MultiServerMCPClient(
         "filesystem": {
             "transport": "streamable_http",
             "url": MCP_FS_URL,
+            "headers": _auth_headers,
+        },
+        "finance": {
+            "transport": "streamable_http",
+            "url": MCP_FINANCE_URL,
             "headers": _auth_headers,
         },
     }

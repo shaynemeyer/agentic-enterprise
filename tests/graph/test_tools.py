@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Annotated, TypedDict
 
@@ -202,3 +203,96 @@ async def test_write_rejects_oversize_payload(monkeypatch):
     monkeypatch.setattr(fs_server.settings, "agent_files_max_write_bytes", 10)
     with pytest.raises(ValueError, match="exceeds"):
         await fs_server.write_text_file(path="big.txt", content="x" * 50)
+
+
+FINANCE_MCP_URL = "http://127.0.0.1:8103/mcp"
+FINANCE_API_URL = "http://127.0.0.1:8102"
+
+
+def _finance_up() -> bool:
+    try:
+        httpx.get(FINANCE_API_URL, timeout=0.5)
+        httpx.get(FINANCE_MCP_URL.rsplit("/mcp", 1)[0], timeout=0.5)
+        return True
+    except httpx.HTTPError:
+        return False
+
+
+requires_finance = pytest.mark.skipif(
+    not _finance_up(), reason="finance MCP server or mock API not running"
+)
+
+
+def _balance_call(account_id: str) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "get_account_balance", "args": {"account_id": account_id}, "id": "call_b"}
+        ],
+    )
+
+
+@pytest.mark.asyncio
+@requires_mcp
+@requires_finance
+async def test_get_account_balance_crosses_both_boundaries():
+    tools = await load_tools()
+    bal = next(t for t in tools if t.name == "get_account_balance")
+    blocks = await bal.ainvoke({"account_id": "ACC-1001"})
+    out = json.loads(blocks[0]["text"])
+    assert out["currency"] == "USD"
+    assert out["balance"] == 1_250_500.75
+
+
+@pytest.mark.asyncio
+@requires_mcp
+@requires_finance
+async def test_unknown_account_is_an_error_message():
+    tools = await load_tools()
+    out = await _one_node_graph(
+        ToolNode(tools, handle_tool_errors=format_tool_error)
+    ).ainvoke({"messages": [_balance_call("ACC-9999")]})
+    msg = out["messages"][-1]
+    assert msg.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_token_cache_refreshes_near_expiry(monkeypatch):
+    from app.mcp.oauth import ClientCredentialsToken
+
+    calls = []
+
+    async def fake_fetch(self):
+        calls.append(1)
+        self._access_token = f"tok-{len(calls)}"
+        self._expires_at = 0.0 if len(calls) == 1 else 1e12
+
+    monkeypatch.setattr(ClientCredentialsToken, "_fetch", fake_fetch)
+    t = ClientCredentialsToken("u", "id", "sec", "scope")
+
+    assert await t.value() == "tok-1"  # first fetch
+    assert await t.value() == "tok-2"  # tok-1 already past expiry -> refetch
+    assert await t.value() == "tok-2"  # tok-2 valid -> cached
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_token_cache_single_fetch_under_concurrency(monkeypatch):
+    """Ten coroutines hitting a cold cache trigger exactly one POST."""
+    import asyncio
+
+    from app.mcp.oauth import ClientCredentialsToken
+
+    calls = []
+
+    async def fake_fetch(self):
+        await asyncio.sleep(0.01)  # make the race real
+        calls.append(1)
+        self._access_token = "tok"
+        self._expires_at = 1e12
+
+    monkeypatch.setattr(ClientCredentialsToken, "_fetch", fake_fetch)
+    t = ClientCredentialsToken("u", "id", "sec", "scope")
+
+    await asyncio.gather(*(t.value() for _ in range(10)))
+    assert len(calls) == 1
