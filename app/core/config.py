@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # must fire in a real deployment check against this.
     app_env: str = "dev"
 
+    # Lab 47: sandboxed code execution runs on gVisor (runsc), which needs a
+    # real Linux kernel - macOS can't run it. This points at Podman's remote
+    # API socket inside the gvisor-lab Multipass VM (see docs/.labs/lab-47-*.md),
+    # reached over SSH. That VM's Podman is configured with runsc as its
+    # default OCI runtime (Podman has no per-container runtime override over
+    # the remote API, unlike Docker's runtime= kwarg).
+    sandbox_podman_url: str = "ssh://ubuntu@192.168.252.2/run/podman/podman.sock"
+
     finance_api_url: str = "http://127.0.0.1:8102"
     finance_oauth_token_url: str = "http://127.0.0.1:8102/oauth/token"
     finance_oauth_client_id: str = "finance-mcp-server"
