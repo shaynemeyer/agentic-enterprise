@@ -9,9 +9,28 @@ it through a MultiServerMCPClient (app/graph/tools.py). Start it with:
 from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
-mcp = FastMCP("risk-tools", host="127.0.0.1", port=8100)
+# FastMCP's default DNS-rebinding guard (host in {"127.0.0.1","localhost","::1"})
+# only trusts those same three Host header values. A containerized agent-api
+# (Lab 47) reaches this process via host.containers.internal, so that name
+# needs to be added explicitly - the guard stays on, it just also trusts the
+# container-gateway hostname.
+mcp = FastMCP(
+    "risk-tools",
+    host="127.0.0.1",
+    port=8100,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "host.containers.internal:*"],
+        allowed_origins=[
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+            "http://host.containers.internal:*",
+        ],
+    ),
+)
 
 # Fields declared one per argument, not wrapped in a Pydantic model. A model
 # param makes FastMCP nest the schema under "params", so the tool would only

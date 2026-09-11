@@ -16,6 +16,7 @@ from typing import Annotated
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -31,7 +32,23 @@ if settings.app_env != "dev" and settings.finance_oauth_client_secret == _PLACEH
         "secret (APP_ENV=dev bypasses this for local work)."
     )
 
-mcp = FastMCP("finance-tools", host="127.0.0.1", port=8103)
+# See app/mcp/risk_server.py for why host.containers.internal is added here -
+# a containerized agent-api (Lab 47) reaches this process by that hostname,
+# which FastMCP's default DNS-rebinding guard would otherwise reject.
+mcp = FastMCP(
+    "finance-tools",
+    host="127.0.0.1",
+    port=8103,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "host.containers.internal:*"],
+        allowed_origins=[
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+            "http://host.containers.internal:*",
+        ],
+    ),
+)
 
 _engine = create_async_engine(settings.database_url)
 _Session = async_sessionmaker(_engine, expire_on_commit=False)

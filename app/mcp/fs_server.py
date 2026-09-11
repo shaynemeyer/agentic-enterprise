@@ -13,6 +13,7 @@ from typing import Annotated
 
 import anyio
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -21,7 +22,23 @@ from app.mcp.auth import require_bearer_token
 from app.mcp.paths import ROOT, resolve_in_root
 from app.models import FileAuditEvent
 
-mcp = FastMCP("filesystem-tools", host="127.0.0.1", port=8101)
+# See app/mcp/risk_server.py for why host.containers.internal is added here -
+# a containerized agent-api (Lab 47) reaches this process by that hostname,
+# which FastMCP's default DNS-rebinding guard would otherwise reject.
+mcp = FastMCP(
+    "filesystem-tools",
+    host="127.0.0.1",
+    port=8101,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "host.containers.internal:*"],
+        allowed_origins=[
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+            "http://host.containers.internal:*",
+        ],
+    ),
+)
 
 _engine = create_async_engine(settings.database_url)
 _Session = async_sessionmaker(_engine, expire_on_commit=False)
