@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String, Text
+from sqlalchemy import Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, TimestampMixin
@@ -48,3 +48,18 @@ class BalanceQueryEvent(Base, TimestampMixin):
     username: Mapped[str | None] = mapped_column(String(128))
     outcome: Mapped[str] = mapped_column(String(16))  # "ok" | "error"
     detail: Mapped[str | None] = mapped_column(String(256))  # error text, if any
+
+
+class CodeExecutionEvent(Base, TimestampMixin):
+    """One row per sandboxed code execution. `created_at` is when the
+    container was launched. thread_id ties it back to the graph run."""
+
+    __tablename__ = "code_execution_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[str | None] = mapped_column(String(128))
+    code_length: Mapped[int] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(16))  # "ok" | "error"
+    detail: Mapped[str | None] = mapped_column(
+        String(512)
+    )  # stdout/stderr tail, or error text

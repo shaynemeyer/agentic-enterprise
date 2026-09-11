@@ -8,10 +8,15 @@ every call, so the docstring is a prompt - write it for the model to read.
 import asyncio
 import os
 
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool, tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from app.core.config import settings
+from app.tools.code_executor import (
+    CodeExecutionInput,
+    execute_sandboxed_code,
+    execute_sandboxed_code_async,
+)
 
 
 @tool
@@ -25,6 +30,18 @@ def get_deployment_status(service_name: str) -> str:
     known = {"agent-api": "healthy, v1.4.2", "redis": "healthy", "db": "healthy"}
     return known.get(service_name, f"unknown service: {service_name}")
 
+
+sandboxed_code_tool = StructuredTool.from_function(
+    func=execute_sandboxed_code,
+    coroutine=execute_sandboxed_code_async,
+    name="execute_sandboxed_code",
+    description=(
+        "Run a short Python script in an isolated, network-disabled "
+        "sandbox for data analysis or calculations no other tool covers. "
+        "The script must print() its result."
+    ),
+    args_schema=CodeExecutionInput,
+)
 
 MCP_RISK_URL = os.environ.get("MCP_RISK_URL", "http://127.0.0.1:8100/mcp")
 MCP_FS_URL = os.environ.get("MCP_FS_URL", "http://127.0.0.1:8101/mcp")
@@ -61,7 +78,7 @@ async def load_tools() -> list:
     Call this once at startup, not per request.
     """
     remote = await _mcp_client.get_tools()
-    return [get_deployment_status, *remote]
+    return [get_deployment_status, sandboxed_code_tool, *remote]
 
 
 _tools_cache: list | None = None
