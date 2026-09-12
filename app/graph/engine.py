@@ -19,6 +19,7 @@ from app.core.llm import get_sovereign_llm
 from app.graph.ownership import is_admin, owned_thread_ids
 from app.graph.tools import get_market_metrics, load_tools, market_metrics_tool
 from app.memory.vector_store import search
+from app.schemas.agent_schema import InvestmentAnalysis
 
 
 def merge_logs(existing: list[str] | None, update: list[str]) -> list[str]:
@@ -65,7 +66,7 @@ class GraphState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     status: str
     internal_logs: Annotated[list[str], merge_logs]
-    route_to: Literal["technical", "billing", "general"]
+    route_to: Literal["technical", "billing", "general", "investment"]
     # No reducer -> overwrite. The general worker reads the current value and
     # returns current + 1; the critic reads it to decide whether to stop.
     revision_count: int
@@ -78,6 +79,9 @@ class GraphState(TypedDict):
     # No reducer -> overwrite, same convention as route_to/critique above:
     # each run's lookup replaces the last.
     tool_result: dict
+    # No reducer -> overwrite. The schema-locked terminal output of the
+    # /analyze route; None until generate_structured_report runs.
+    analysis: InvestmentAnalysis | None
 
 
 class GraphOutput(TypedDict):
@@ -169,6 +173,8 @@ async def route_request(state: GraphState) -> dict:
         decision = "technical"
     elif any(w in text for w in ("invoice", "payment", "billing", "charge")):
         decision = "billing"
+    elif any(w in text for w in ("ticker", "stock", "invest", "analyze", "shares")):
+        decision = "investment"
     else:
         decision = "general"
 
@@ -316,6 +322,30 @@ async def fetch_market_metrics(state: GraphState, runtime: Runtime[RuntimeContex
     return {"internal_logs": [f"fetch_market_metrics: {result}"], "tool_result": result}
 
 
+async def generate_structured_report(
+    state: GraphState, runtime: Runtime[RuntimeContext]
+) -> dict:
+    """Turn the fetched metrics into a schema-locked InvestmentAnalysis.
+
+    Uses runtime.context.llm - the plain, unbound handle - not tool_llm.
+    with_structured_output constrains this call to one schema; a model
+    also bound to the graph's full tool list would leave tool_choice and
+    schema-forcing in tension for the same invoke() call (see "Why this
+    needs its own node" in docs/.labs/lab-49-*.md).
+    """
+    structured_llm = runtime.context.llm.with_structured_output(InvestmentAnalysis)
+    prompt = (
+        f"Based on these metrics: {state['tool_result']}, write an "
+        "InvestmentAnalysis. key_drivers must list at least 3 distinct "
+        "market drivers - do not stop at 2."
+    )
+    report: InvestmentAnalysis = await structured_llm.ainvoke(prompt)
+    return {
+        "analysis": report,
+        "internal_logs": ["format_report: structured analysis generated"],
+    }
+
+
 GENERAL_REVISION_LIMIT = 3
 
 
@@ -358,13 +388,17 @@ async def critic(state: GraphState) -> dict:
     }
 
 
-def after_memory_retriever(state: GraphState) -> Literal["agent", "general", "billing"]:
+def after_memory_retriever(
+    state: GraphState,
+) -> Literal["agent", "general", "billing", "fetch_metrics"]:
     """Resume at whichever worker route_request originally chose."""
     decision = state.get("route_to")
     if decision == "technical":
         return "agent"
     if decision == "billing":
         return "billing"
+    if decision == "investment":
+        return "fetch_metrics"
     return "general"
 
 
@@ -387,6 +421,10 @@ graph_builder.add_node("agent", call_model)
 graph_builder.add_node("billing", billing_worker)
 graph_builder.add_node("general", general_worker)
 graph_builder.add_node("critic", critic)
+graph_builder.add_node("fetch_metrics", fetch_market_metrics)
+graph_builder.add_node("format_report", generate_structured_report)
+graph_builder.add_edge("fetch_metrics", "format_report")
+graph_builder.add_edge("format_report", END)
 
 graph_builder.add_edge(START, "router")
 graph_builder.add_node("memory_retriever", retrieve_semantic_memories)
