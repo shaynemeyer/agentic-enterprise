@@ -38,6 +38,7 @@ from app.schemas.agent_schema import (
     AskResponse,
     ConversationHistory,
     HistoryTurn,
+    InvestmentAnalysis,
 )
 from app.schemas.memory_schema import MemorySearchResponse, RememberResponse
 from app.schemas.stream import StreamEvent
@@ -255,6 +256,29 @@ async def ask(
         config={"configurable": {"thread_id": f"ask:{user.username}"}},
     )
     return AskResponse(query=q, output=result["messages"][-1].content)
+
+
+@router.post("/analyze", response_model=InvestmentAnalysis)
+async def analyze_investment(
+    ticker: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Schema-locked investment analysis for one ticker.
+
+    tool_llm and db are left out of context= here, unlike /run - fetch_metrics
+    and format_report only ever touch runtime.context.llm, so there's nothing
+    in this graph run that needs them. response_model=InvestmentAnalysis is a
+    second, independent validation pass over result["analysis"] - see
+    docs/.labs/lab-49-*.md's "double-lock" note.
+    """
+    workflow = await build_workflow()
+    llm = get_sovereign_llm()
+    result = await workflow.ainvoke(
+        {"messages": [HumanMessage(f"Analyze {ticker}")]},
+        context={"llm": llm, "username": user.username},
+        config={"configurable": {"thread_id": f"analyze:{user.username}"}},
+    )
+    return result["analysis"]
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationHistory)
