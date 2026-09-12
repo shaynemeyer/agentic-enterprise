@@ -84,3 +84,11 @@ async def build_research_workflow():
         )
         _research_app = _research_builder.compile(checkpointer=checkpointer)
     return _research_app
+
+
+async def research_mermaid() -> str:
+    """The compiled research graph as a Mermaid flowchart. Regenerate
+    docs/graph-research.mmd from this - same convention as engine.py's
+    graph_mermaid() for the main graph."""
+    workflow = await build_research_workflow()
+    return workflow.get_graph().draw_mermaid()
