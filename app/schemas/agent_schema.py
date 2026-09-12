@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,3 +70,22 @@ class HistoryTurn(BaseModel):
 class ConversationHistory(BaseModel):
     conversation_id: str
     turns: list[HistoryTurn]
+
+
+class InvestmentAnalysis(BaseModel):
+    """Terminal, schema-locked output of the /analyze route.
+
+    Literal closes sentiment to exactly these three values - the model
+    cannot invent "Kinda Bullish". ge/le and min_length are enforced by
+    Pydantic on the way out, independent of whatever the model's own
+    structured-output machinery already checked on the way in (see
+    docs/.labs/lab-49-*.md's "double-lock" note).
+    """
+
+    ticker: str = Field(description="The stock ticker symbol, e.g. AAPL")
+    sentiment: Literal["Bullish", "Bearish", "Neutral"]
+    risk_score: int = Field(ge=1, le=10, description="Risk from 1 (low) to 10 (high)")
+    key_drivers: list[str] = Field(min_length=3, description="At least 3 market drivers")
+    compliance_check: bool = Field(
+        default=True, description="Must be true for this response to be usable downstream"
+    )
