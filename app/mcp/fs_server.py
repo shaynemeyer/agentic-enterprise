@@ -58,10 +58,24 @@ async def read_text_file(path: RelPath) -> str:
 
     Use this to read a document the agent has been told to consult or a
     file it wrote earlier. Fails if the path escapes the directory or the
-    file does not exist.
+    file does not exist. Every read is recorded in the audit log, same as
+    every write.
     """
     target = resolve_in_root(path)
-    return await anyio.to_thread.run_sync(lambda: target.read_text(encoding="utf-8"))
+    content = await anyio.to_thread.run_sync(lambda: target.read_text(encoding="utf-8"))
+
+    async with _Session() as session:
+        session.add(
+            FileAuditEvent(
+                path=path,
+                action="read",
+                byte_count=len(content.encode("utf-8")),
+                preview=content[:200],
+            )
+        )
+        await session.commit()
+
+    return content
 
 
 @mcp.tool()
