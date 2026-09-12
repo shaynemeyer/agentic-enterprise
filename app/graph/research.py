@@ -51,7 +51,9 @@ async def generate_research_report(
     structured_llm = runtime.context.llm.with_structured_output(ResearchReport)
     transcript = "\n".join(str(m.content) for m in state["messages"])
     report = await structured_llm.ainvoke(
-        f"Synthesize a ResearchReport from this research transcript:\n{transcript}"
+        "Synthesize a ResearchReport from this research transcript. "
+        "confidence must be a fraction between 0.0 and 1.0 (not a percentage, "
+        f"not out of 100):\n{transcript}"
     )
     return {"report": report}
 
