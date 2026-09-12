@@ -89,3 +89,21 @@ class InvestmentAnalysis(BaseModel):
     compliance_check: bool = Field(
         default=True, description="Must be true for this response to be usable downstream"
     )
+
+
+class ResearchReport(BaseModel):
+    """Terminal, schema-locked output of an autonomous research run.
+
+    Same double-lock pattern as InvestmentAnalysis (Lab 49):
+    with_structured_output enforces this on the way out of the LLM,
+    response_model= (the /research route) enforces it again at the API
+    boundary.
+    """
+
+    topic: str
+    summary: str = Field(min_length=20, description="Synthesized findings")
+    sources_consulted: list[str] = Field(
+        default_factory=list,
+        description="Relative paths of files actually read via the filesystem MCP tools",
+    )
+    confidence: float = Field(ge=0.0, le=1.0, description="Self-assessed confidence, 0-1")
