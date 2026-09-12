@@ -3,9 +3,8 @@
 gVisor (runsc) needs a real Linux kernel, which macOS cannot provide, so
 this project's dev machine cannot host the sandbox itself. execute_sandboxed_code
 instead reaches a Podman remote API socket inside the gvisor-lab Multipass
-VM (settings.sandbox_podman_url, an ssh:// URL - see docs/.labs/lab-47-*.md)
-and launches one python:3.11-slim container per call there, network-disabled
-and memory/process-capped, removed when the call finishes.
+VM (settings.sandbox_podman_url, an ssh:// URL and launches one python:3.11-slim
+container per call there, network-disabled and memory/process-capped, removed when the call finishes.
 
 Podman, not Docker: Podman's remote API has no per-container runtime
 override (Docker's containers.run(runtime=...) kwarg has no Podman
@@ -93,7 +92,9 @@ def execute_sandboxed_code(code: str) -> dict:
     return {"output": output.strip(), "status": "success"}
 
 
-async def _audit(thread_id: str | None, code_length: int, outcome: str, detail: str) -> None:
+async def _audit(
+    thread_id: str | None, code_length: int, outcome: str, detail: str
+) -> None:
     async with SessionLocal() as session:
         session.add(
             CodeExecutionEvent(
