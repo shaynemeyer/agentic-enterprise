@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.context import get_request_id
 from app.core.llm import get_sovereign_llm
 from app.graph.ownership import is_admin, owned_thread_ids
-from app.graph.tools import load_tools
+from app.graph.tools import get_market_metrics, load_tools, market_metrics_tool
 from app.memory.vector_store import search
 
 
@@ -75,6 +75,9 @@ class GraphState(TypedDict):
     # No reducer -> overwrite, same convention as route_to/critique above:
     # each run's retrieval replaces the last, it does not accumulate.
     retrieved_context: list[str]
+    # No reducer -> overwrite, same convention as route_to/critique above:
+    # each run's lookup replaces the last.
+    tool_result: dict
 
 
 class GraphOutput(TypedDict):
@@ -294,6 +297,23 @@ async def general_worker(state: GraphState, runtime: Runtime[RuntimeContext]) ->
         "internal_logs": [f"general: model call complete (attempt {count + 1})"],
         "revision_count": count + 1,
     }
+
+
+async def fetch_market_metrics(state: GraphState, runtime: Runtime[RuntimeContext]) -> dict:
+    """Force a get_market_metrics call before any report gets written.
+
+    tool_choice=<name> (not "required" - LangChain's ChatOpenAI accepts
+    both, but naming the tool directly leaves nothing to interpret when
+    only one tool is bound here anyway) disables free-text replies and
+    disables picking a different tool for this one invoke() call.
+    """
+    llm = runtime.context.llm.bind_tools(
+        [market_metrics_tool], tool_choice="get_market_metrics"
+    )
+    response = await llm.ainvoke(state["messages"])
+    call = response.tool_calls[0]
+    result = await get_market_metrics(**call["args"])
+    return {"internal_logs": [f"fetch_market_metrics: {result}"], "tool_result": result}
 
 
 GENERAL_REVISION_LIMIT = 3
