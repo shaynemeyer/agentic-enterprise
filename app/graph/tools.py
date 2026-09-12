@@ -6,6 +6,7 @@ every call, so the docstring is a prompt - write it for the model to read.
 """
 
 import asyncio
+import logging
 import os
 
 from langchain_core.tools import StructuredTool, tool
@@ -17,6 +18,8 @@ from app.tools.code_executor import (
     execute_sandboxed_code,
     execute_sandboxed_code_async,
 )
+
+logger = logging.getLogger("enterprise_agent.tools")
 
 
 @tool
@@ -41,6 +44,25 @@ sandboxed_code_tool = StructuredTool.from_function(
         "The script must print() its result."
     ),
     args_schema=CodeExecutionInput,
+)
+
+
+async def get_weather(city: str) -> str:
+    """Return the current weather for a city.
+
+    Args:
+        city: the city to fetch weather for, e.g. "London".
+    """
+    logger.info("weather lookup started city=%s", city)
+    await asyncio.sleep(2)  # stands in for a real network call's latency
+    logger.info("weather lookup finished city=%s", city)
+    return f"The weather in {city} is 22C and sunny."
+
+
+weather_tool = StructuredTool.from_function(
+    coroutine=get_weather,
+    name="get_weather",
+    description="Return the current weather for a named city.",
 )
 
 MCP_RISK_URL = os.environ.get("MCP_RISK_URL", "http://127.0.0.1:8100/mcp")
@@ -78,7 +100,7 @@ async def load_tools() -> list:
     Call this once at startup, not per request.
     """
     remote = await _mcp_client.get_tools()
-    return [get_deployment_status, sandboxed_code_tool, *remote]
+    return [get_deployment_status, sandboxed_code_tool, weather_tool, *remote]
 
 
 _tools_cache: list | None = None
