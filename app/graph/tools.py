@@ -65,6 +65,23 @@ weather_tool = StructuredTool.from_function(
     description="Return the current weather for a named city.",
 )
 
+
+async def get_market_metrics(ticker: str) -> dict:
+    """Fetch current market metrics for a ticker symbol.
+
+    Args:
+        ticker: the stock ticker to look up, e.g. "AAPL".
+    """
+    # Mocked - a real implementation would call a market-data API.
+    return {"ticker": ticker, "price": 150.00, "volume": "1M", "status": "LIVE"}
+
+
+market_metrics_tool = StructuredTool.from_function(
+    coroutine=get_market_metrics,
+    name="get_market_metrics",
+    description="Fetch current market metrics (price, volume, status) for a ticker.",
+)
+
 MCP_RISK_URL = os.environ.get("MCP_RISK_URL", "http://127.0.0.1:8100/mcp")
 MCP_FS_URL = os.environ.get("MCP_FS_URL", "http://127.0.0.1:8101/mcp")
 MCP_FINANCE_URL = os.environ.get("MCP_FINANCE_URL", "http://127.0.0.1:8103/mcp")
@@ -100,7 +117,7 @@ async def load_tools() -> list:
     Call this once at startup, not per request.
     """
     remote = await _mcp_client.get_tools()
-    return [get_deployment_status, sandboxed_code_tool, weather_tool, *remote]
+    return [get_deployment_status, sandboxed_code_tool, weather_tool, market_metrics_tool, *remote]
 
 
 _tools_cache: list | None = None
