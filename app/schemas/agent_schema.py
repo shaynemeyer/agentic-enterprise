@@ -107,3 +107,8 @@ class ResearchReport(BaseModel):
         description="Relative paths of files actually read via the filesystem MCP tools",
     )
     confidence: float = Field(ge=0.0, le=1.0, description="Self-assessed confidence, 0-1")
+
+
+class ResearchRequest(BaseModel):
+    topic: str = Field(min_length=3, max_length=500)
+    thread_id: str
