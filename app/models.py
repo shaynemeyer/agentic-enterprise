@@ -23,14 +23,14 @@ class ThreadOwnership(Base, TimestampMixin):
 
 
 class FileAuditEvent(Base, TimestampMixin):
-    """One row per file write the agent made through the MCP filesystem
-    server. `created_at` (from TimestampMixin) is the write time."""
+    """One row per file read or write the agent made through the MCP
+    filesystem server. `created_at` (from TimestampMixin) is the event time."""
 
     __tablename__ = "file_audit_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     path: Mapped[str] = mapped_column(String(1024))
-    action: Mapped[str] = mapped_column(String(32))  # "write" | "create"
+    action: Mapped[str] = mapped_column(String(32))  # "read" | "write" | "create"
     byte_count: Mapped[int] = mapped_column()
     preview: Mapped[str] = mapped_column(Text)  # first 200 chars written
 

@@ -30,6 +30,7 @@ from app.graph.history import (
     thread_timeline,
 )
 from app.graph.ownership import is_admin, owned_thread_ids
+from app.graph.research import build_research_workflow
 from app.graph.tools import get_tools
 from app.memory.vector_store import remember, search
 from app.models import AgentExecution
@@ -40,6 +41,8 @@ from app.schemas.agent_schema import (
     ConversationHistory,
     HistoryTurn,
     InvestmentAnalysis,
+    ResearchRequest,
+    ResearchReport,
 )
 from app.schemas.memory_schema import MemorySearchResponse, RememberResponse
 from app.schemas.stream import StreamEvent
@@ -290,6 +293,45 @@ async def analyze_investment(
         config={"configurable": {"thread_id": f"analyze:{user.username}:{uuid4()}"}},
     )
     return result["analysis"]
+
+
+RESEARCH_RECURSION_LIMIT = 50
+
+
+@router.post("/research", response_model=ResearchReport)
+async def run_research(
+    request: ResearchRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Autonomous research loop (Lab 50): agent -> tools -> agent -> report.
+
+    Unlike /analyze's fixed two-node path, should_continue lets the model
+    decide on its own how many tool calls it needs - recursion_limit is the
+    actual backstop against that being unbounded, not a formality. 50 (over
+    LangGraph's default 25) is a judgment call for a genuinely multi-file
+    research task, not a fix for a bug; a GraphRecursionError here means the
+    loop legitimately didn't converge, not that the limit is too low.
+    """
+    workflow = await build_research_workflow()
+    llm = get_sovereign_llm()
+    tools = await get_tools()
+
+    try:
+        result = await workflow.ainvoke(
+            {
+                "messages": [HumanMessage(f"Research the following: {request.topic}")],
+                "report": None,
+            },
+            context={"llm": llm, "tool_llm": llm.bind_tools(tools), "username": user.username},
+            config={
+                "configurable": {"thread_id": request.thread_id},
+                "recursion_limit": RESEARCH_RECURSION_LIMIT,
+            },
+        )
+    except GraphRecursionError:
+        raise MaxRecursionError(details={"topic": request.topic})
+
+    return result["report"]
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationHistory)

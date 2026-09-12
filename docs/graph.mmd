@@ -10,6 +10,8 @@ graph TD;
 	billing(billing)
 	general(general)
 	critic(critic)
+	fetch_metrics(fetch_metrics)
+	format_report(format_report)
 	memory_retriever(memory_retriever)
 	tools(tools)
 	__end__([<p>__end__</p>]):::last
@@ -18,13 +20,16 @@ graph TD;
 	agent -.-> tools;
 	critic -.-> __end__;
 	critic -.-> general;
+	fetch_metrics --> format_report;
 	general --> critic;
 	memory_retriever -.-> agent;
 	memory_retriever -.-> billing;
+	memory_retriever -.-> fetch_metrics;
 	memory_retriever -.-> general;
 	router --> memory_retriever;
 	tools --> agent;
 	billing --> __end__;
+	format_report --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
