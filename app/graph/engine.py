@@ -89,6 +89,9 @@ class GraphOutput(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     status: str
+    # /analyze's terminal result - included here so ainvoke() actually
+    # returns it; every other scratchpad key stays filtered out.
+    analysis: InvestmentAnalysis | None
 
 
 @dataclass

@@ -1,4 +1,5 @@
 import logging
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi_cache.decorator import cache
@@ -270,13 +271,23 @@ async def analyze_investment(
     in this graph run that needs them. response_model=InvestmentAnalysis is a
     second, independent validation pass over result["analysis"] - see
     docs/.labs/lab-49-*.md's "double-lock" note.
+
+    thread_id includes a fresh uuid per call, not just f"analyze:{username}" -
+    the checkpointer's add_messages reducer is append-only, so a fixed thread_id
+    accumulates every past "Analyze X" HumanMessage across calls. fetch_metrics
+    hands the model that whole history, so a repeat caller's earlier ticker can
+    win over the current one. Proven live: two /analyze calls sharing a thread_id
+    (AAPL then NVDA) both returned AAPL's analysis. A caller who wants
+    conversational continuity across analyses doesn't exist yet for this route,
+    unlike /run's caller-supplied conversation_id - add a query param for that
+    if/when needed, rather than defaulting to shared state.
     """
     workflow = await build_workflow()
     llm = get_sovereign_llm()
     result = await workflow.ainvoke(
         {"messages": [HumanMessage(f"Analyze {ticker}")]},
         context={"llm": llm, "username": user.username},
-        config={"configurable": {"thread_id": f"analyze:{user.username}"}},
+        config={"configurable": {"thread_id": f"analyze:{user.username}:{uuid4()}"}},
     )
     return result["analysis"]
 
